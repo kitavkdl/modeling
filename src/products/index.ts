@@ -1,7 +1,8 @@
 import type { ProductDef } from '../engine/types'
 import { keyboardProduct } from './keyboard'
+import { ninja400Product } from './ninja400'
 
-export const PRODUCTS: ProductDef[] = [keyboardProduct]
+export const PRODUCTS: ProductDef[] = [keyboardProduct, ninja400Product]
 
 export function productForPath(pathname: string): ProductDef | null {
   const path = pathname.split(/[?#]/, 1)[0]
