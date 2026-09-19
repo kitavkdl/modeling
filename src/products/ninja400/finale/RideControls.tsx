@@ -3,7 +3,7 @@ import { useFrame } from '@react-three/fiber'
 import { useAssembly } from '../../../engine/context'
 import * as engineSound from '../audio/engineSound'
 import { rideLoad, shiftDown, shiftUp, stepRide } from './rideModel'
-import { notifyRide, ride, rideInput } from './rideState'
+import { clutchHeld, notifyRide, ride, rideInput } from './rideState'
 
 // 키보드 주행 조작. 그리는 것은 없고 window 이벤트와 매 프레임 계산만 맡는다.
 //   ↑ 스로틀 · ↓ 앞브레이크 · Shift 클러치 · ← 시프트 다운 · → 시프트 업
@@ -13,8 +13,6 @@ import { notifyRide, ride, rideInput } from './rideState'
 const KICK_S = 0.15
 /** 탭이 멈췄다 돌아왔을 때 한 프레임에 몰아서 계산하지 않도록 */
 const MAX_DT = 0.1
-/** 이만큼 잡아야 기어가 들어간다 */
-const CLUTCH_FOR_SHIFT = 0.6
 
 /** 입력 요소에 포커스가 있으면 주행 조작으로 삼지 않는다 */
 function typing(target: EventTarget | null): boolean {
@@ -54,7 +52,7 @@ export function RideControls() {
         case 'ArrowRight': {
           e.preventDefault()
           if (e.repeat) return
-          if (ride.clutch < CLUTCH_FOR_SHIFT) {
+          if (!clutchHeld()) {
             // 클러치를 안 잡았다 — 기어가 걸리는 시늉만
             ride.shiftKick = -1
             return

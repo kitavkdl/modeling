@@ -3,7 +3,7 @@
 // 매 프레임 바뀌는 값을 리액트 상태로 올리면 장면 전체가 다시 그려지므로, 화면에 필요한 쪽이
 // 각자 폴링(계기)하거나 드물게 바뀌는 값만 구독(stalled)한다.
 
-import type { RideSim } from './rideModel'
+import { CLUTCH_ENGAGED, type RideSim } from './rideModel'
 
 export interface RideInput {
   throttleKey: boolean
@@ -33,6 +33,13 @@ export const ride: RideState = {
 }
 
 export const rideInput: RideInput = { throttleKey: false, brakeKey: false, clutchKey: false }
+
+/**
+ * 변속과 재시동이 허용되는 조건. **키 상태가 기준이다** — `ride.clutch`는 0.12초 시정수로
+ * 따라오는 연출용 값이라, Shift와 ←를 거의 동시에 누르면 아직 0.6에 못 미쳐 거부당했다.
+ * (브라우저 확인 R-7) 손을 떼는 짧은 동안은 부드러운 값으로도 받아 준다.
+ */
+export const clutchHeld = (): boolean => rideInput.clutchKey || ride.clutch >= CLUTCH_ENGAGED
 
 /** 시동이 꺼지거나 조립으로 돌아갈 때 */
 export function resetRide(): void {

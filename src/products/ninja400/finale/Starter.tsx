@@ -5,7 +5,7 @@ import { useAssembly, useAssemblyStore, useMaterials } from '../../../engine/con
 import { MM, type Vec3 } from '../../../engine/types'
 import * as engineSound from '../audio/engineSound'
 import { forkPoint, HEAD } from '../spec'
-import { notifyRide, ride, subscribeRide } from './rideState'
+import { clutchHeld, notifyRide, ride, subscribeRide } from './rideState'
 
 // 우측 클립온의 스위치 하우징. keyed에서 빨간 버튼을 누르면 시동이 걸린다.
 // running에서도 그대로 보이되 버튼은 눌린 자리에 있고 더는 반응하지 않는다.
@@ -21,8 +21,6 @@ const BUTTON_COLOR = '#b3261e'
 /** 거부됐을 때 흔들리는 시간(초)과 진폭(mm) */
 const REFUSE_S = 0.3
 const REFUSE_MM = 4
-/** 이만큼 잡아야 기어가 들어간 채로도 시동이 걸린다 */
-const CLUTCH_FOR_START = 0.6
 
 export function Starter() {
   const store = useAssemblyStore()
@@ -47,7 +45,7 @@ export function Starter() {
       }
       if (current !== 'running' || !ride.stalled) return
       e.stopPropagation()
-      if (ride.gear !== 0 && ride.clutch < CLUTCH_FOR_START) {
+      if (ride.gear !== 0 && !clutchHeld()) {
         refusedFor.current = REFUSE_S
         return
       }

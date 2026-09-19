@@ -7,6 +7,11 @@ export const PRIMARY = 3.087
 export const FINAL = 3.071
 export const IDLE_RPM = 1300
 export const MAX_RPM = 10000
+/**
+ * 변속·재시동을 허용하는 클러치 기준.
+ * 판정에 쓰는 것은 키 상태이고(rideState.clutchHeld), 이 값은 그 보조와 표시등 기준이다.
+ */
+export const CLUTCH_ENGAGED = 0.6
 
 /** 이 아래로 떨어진 채 STALL_AFTER_S가 지나면 시동이 꺼진다 */
 const STALL_RPM = 1100
@@ -14,10 +19,12 @@ const STALL_AFTER_S = 0.4
 /** 물린 기어가 엔진을 끄는 정도 (rpm) */
 const DRAG_RPM = 600
 /** 값이 목표에 이 정도까지 붙으면 그대로 목표로 둔다 — 아이들 제어기가 붙잡는 셈 */
-const RPM_SNAP = 25
+const RPM_SNAP = 3
+/** 스로틀을 닫았을 때 회전이 떨어지는 시정수 (초) */
+const DECEL_TAU = 0.15
 /** 클러치가 다 물리면 바퀴는 엔진에 거의 직결이다 — 따라가는 시정수 (초) */
 const WHEEL_TAU = 0.1
-/** 스로틀은 이 아래면 완전히 닫힌 것으로 본다 */
+/** 스로틀은 목표까지 이만큼 남으면 목표에 붙인다 — 다 감은 그립은 전개, 놓은 그립은 완전히 닫힘 */
 const THROTTLE_SNAP = 0.004
 
 export interface RideSim {
@@ -58,7 +65,7 @@ const approach = (v: number, target: number, tau: number, dt: number) => v + (ta
 export function stepRide(s: RideSim, input: RideInputs, dt: number): RideSim {
   const throttleTarget = Math.max(input.throttleKey ? 1 : 0, input.throttleMouse)
   let throttle = approach(s.throttle, throttleTarget, throttleTarget > s.throttle ? 0.35 : 0.25, dt)
-  if (throttle < THROTTLE_SNAP && throttleTarget === 0) throttle = 0
+  if (Math.abs(throttle - throttleTarget) < THROTTLE_SNAP) throttle = throttleTarget
   const clutch = approach(s.clutch, input.clutchKey ? 1 : 0, 0.12, dt)
   const brake = approach(s.brake, input.brakeKey ? 1 : 0, 0.1, dt)
   const inGear = s.gear !== 0
@@ -76,7 +83,7 @@ export function stepRide(s: RideSim, input: RideInputs, dt: number): RideSim {
     lowRpmFor = 0
   } else {
     const target = IDLE_RPM + throttle * (MAX_RPM - IDLE_RPM) - engaged * (1 - throttle) * DRAG_RPM
-    const tau = target > rpm ? 0.25 + 0.35 * load : 0.25
+    const tau = target > rpm ? 0.25 + 0.35 * load : DECEL_TAU
     rpm = approach(rpm, target, tau, dt)
     if (Math.abs(rpm - target) < RPM_SNAP) rpm = target
     lowRpmFor = inGear && clutchOpen > 0.7 && rpm < STALL_RPM ? lowRpmFor + dt : 0
