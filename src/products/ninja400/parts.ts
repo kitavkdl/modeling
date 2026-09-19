@@ -61,10 +61,13 @@ export const STATIONS: StationDef[] = [
 
 /** 프레임 지그: 프레임 최하단 노드 두 곳을 받치는 기둥 2개.
  *  앞 기둥은 엔진 앞 하단 마운트(200, 300, ±130), 뒤 기둥은 스윙암 피벗(-420, 420, ±150) 아래다.
- *  기둥 윗면 = position.y + size.y 가 그 노드 높이와 정확히 같다. */
+ *  기둥 윗면 = position.y + size.y 가 그 노드 높이와 정확히 같다.
+ *  x는 배기 경로를 피해 노드에서 비켜 세운다. 노드 z폭(±130 / ±150)을 덮어야 해서 z는 줄일 수 없고,
+ *  기둥 x폭 80이 노드 x를 여전히 품는 범위 안에서 옮겼다.
+ *  앞 기둥 x 190..270 — 배기 집합부(x ≤ 180)보다 앞. 뒤 기둥 x -440..-360 — 머플러(x ≤ -450)보다 앞. */
 export const PROPS: NonNullable<ProductDef['props']> = [
-  { geometry: { type: 'box', size: [80, 300, 300] }, position: [200, 0, 0], material: 'bench' },
-  { geometry: { type: 'box', size: [80, 420, 340] }, position: [-420, 0, 0], material: 'bench' },
+  { geometry: { type: 'box', size: [80, 300, 300] }, position: [230, 0, 0], material: 'bench' },
+  { geometry: { type: 'box', size: [80, 420, 340] }, position: [-400, 0, 0], material: 'bench' },
 ]
 
 // 대기 위치 · 카메라 기본값 -------------------------------------------------------
