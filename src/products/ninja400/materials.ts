@@ -18,6 +18,8 @@ export const NINJA_MATERIALS: Record<string, MaterialSpec> = {
   lamp_on: { color: '#fff4dc', emissive: '#ffe9b8', emissiveIntensity: 2.5, metalness: 0, roughness: 0.4 },
   chain: { color: '#5c5e62', metalness: 0.8, roughness: 0.5 },
   bench: { color: '#2a2b2e', metalness: 0.2, roughness: 0.8 },
+  // 라디에이터 코어 — 핀이 촘촘한 매트릭스라 거의 무광 검정으로 본다
+  radiator_core: { color: '#26282b', metalness: 0.3, roughness: 0.85 },
   paint_krt: { physical: true, color: '#69be28', metalness: 0.6, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.1 },
   paint_blue: { physical: true, color: '#1d3f9e', metalness: 0.6, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.1 },
   paint_black: { physical: true, color: '#1a1b1e', metalness: 0.6, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.1 },

@@ -5,7 +5,7 @@
 // 중심 기준이 되도록 회전과 위치를 미리 보정해 둔다.
 
 import type { CompositeChild, Geometry, Vec3 } from '../../engine/types'
-import { RAKE, forkPoint } from './spec'
+import { BORE, CYL_PITCH, RAKE, forkPoint, tilt } from './spec'
 
 /** spec의 RAKE는 이미 라디안이다. 이 파일에서는 이름을 분명히 해 둔다. */
 const RAKE_RAD = RAKE
@@ -355,5 +355,261 @@ export function keyGeometry(): Geometry {
     { geometry: { type: 'box', size: [4, 32, 8] } },
     { geometry: { type: 'extrude', shape: roundedRect(40, 28, 6), depth: 6, bevel: 2 }, position: [0, 32, 0], material: 'plastic_black' },
   ]
+  return { type: 'composite', children }
+}
+
+// --- 엔진 외관 · 배기 · 냉각 ---------------------------------------------------
+// 크랭크케이스가 차지하는 x -330..90, y 280..550, |z| <= 190 은 프레임 여유 테스트의
+// 기준이라 여기 윤곽도 그 안에 들도록 잡았다(마운트 x = -120, 하부 y = 280).
+
+/** 다각형을 반시계로 맞춘다. extrude.shape의 바깥 윤곽은 반시계여야 면이 바깥을 본다. */
+function ccw(pts: [number, number][]): [number, number][] {
+  let area = 0
+  for (let i = 0; i < pts.length; i++) {
+    const [x1, y1] = pts[i]
+    const [x2, y2] = pts[(i + 1) % pts.length]
+    area += x1 * y2 - x2 * y1
+  }
+  return area < 0 ? [...pts].reverse() : pts
+}
+
+/**
+ * 크랭크케이스: 옆에서 본 윤곽(xy)을 z로 380 밀어낸다.
+ * 'lower'는 밑면이 원점이고 y 0..150, 'upper'는 합체면이 원점이고 y 0..120.
+ * 주의 — ExtrudeGeometry의 bevelSize는 윤곽을 바깥으로 밀어낸다. 그래서 윤곽은
+ * 봉투(|x| <= 210 / 200, y 0..150 / 0..120)에서 베벨 6만큼 안으로 그려 둔다.
+ * 마운트 x=-120에서 월드 x -330..90, y 280..550 안에 정확히 들어간다.
+ */
+export function crankcaseGeometry(part: 'lower' | 'upper', bevel = 6): Geometry {
+  if (part === 'lower') {
+    // 앞(+x)은 배기 포트 아래라 살이 두껍고, 뒤(-x)는 변속기라 아래로 부푼다
+    const shape = ccw([
+      [-176, 6], [142, 6], [190, 32], [204, 78], [196, 120], [166, 144],
+      [-152, 144], [-190, 112], [-204, 70],
+    ])
+    return { type: 'extrude', shape, depth: 380, bevel }
+  }
+  const shape = ccw([
+    [-186, 6], [172, 6], [194, 34], [188, 84], [160, 114],
+    [-146, 114], [-184, 82], [-194, 34],
+  ])
+  return { type: 'extrude', shape, depth: 380, bevel }
+}
+
+/**
+ * 실린더 블록: 보어가 뚫린 배럴 두 개에 냉각핀을 두른 lathe 스택 + 위아래 데크(extrude).
+ * 원점은 블록 밑면 중심이고 +y가 실린더 축이다(부품 rot이 TILT_ROT를 준다).
+ */
+export function cylinderBlockFinned(h = 130, fins = 6): Geometry {
+  const bore = BORE / 2 + 1
+  const body = 46
+  const finR = 60
+  const t = 6
+  const profile: [number, number][] = [[bore, 0], [body, 0]]
+  for (let i = 0; i < fins; i++) {
+    const y = 16 + i * 16
+    profile.push([body, y], [finR, y + 1], [finR, y + t - 1], [body, y + t])
+  }
+  profile.push([body, h], [bore, h], [bore, 0])
+  // 두 배럴이 같은 geometry 객체를 공유한다 — curvedGeometry 캐시가 한 번만 만든다
+  const barrel: Geometry = { type: 'lathe', profile, segments: 30 }
+  const deck = (y0: number, y1: number): CompositeChild => ({
+    geometry: { type: 'extrude', shape: ccw([[-102, y0], [102, y0], [102, y1], [-102, y1]]), depth: 230, bevel: 3 },
+  })
+  return {
+    type: 'composite',
+    children: [
+      deck(0, 14),
+      deck(h - 14, h),
+      { geometry: barrel, position: [0, 0, -CYL_PITCH / 2] },
+      { geometry: barrel, position: [0, 0, CYL_PITCH / 2] },
+    ],
+  }
+}
+
+/** 실린더 헤드: 윤곽 extrude + 배기·흡기 포트 스터브. 배기 포트는 tilt(120, 260) — 헤드 로컬 (120, 10). */
+export function cylinderHeadGeometry(): Geometry {
+  const shape = ccw([
+    [-110, 0], [110, 0], [120, 32], [116, 72], [94, 90], [-94, 90], [-116, 72], [-120, 32],
+  ])
+  const stub = (x: number, y: number, z: number, r: number, dir: 1 | -1): CompositeChild => ({
+    geometry: { type: 'cylinder', radiusTop: r, radiusBottom: r * 1.1, height: 34, segments: 16 },
+    position: [x, y, z],
+    rotation: [0, 0, (dir * -Math.PI) / 2],
+  })
+  const half = CYL_PITCH / 2
+  return {
+    type: 'composite',
+    children: [
+      { geometry: { type: 'extrude', shape, depth: 240, bevel: 6 } },
+      stub(104, 10, -half, 23, 1),
+      stub(104, 10, half, 23, 1),
+      stub(-104, 54, -half, 26, -1),
+      stub(-104, 54, half, 26, -1),
+    ],
+  }
+}
+
+/** 캠 커버: 아래가 넓고 위가 좁은 loft 4단면 + 윗면 덮개 + 플러그 홀 보스 2개 */
+export function camCoverGeometry(h = 52): Geometry {
+  const rect = (y: number, hx: number, hz: number): Vec3[] => [
+    [hx, y, hz], [hx, y, -hz], [-hx, y, -hz], [-hx, y, hz],
+  ]
+  const boss: Geometry = {
+    type: 'lathe',
+    segments: 20,
+    profile: [[10, 0], [24, 0], [24, 12], [19, 16], [10, 16], [10, 0]],
+  }
+  const half = CYL_PITCH / 2
+  return {
+    type: 'composite',
+    children: [
+      { geometry: { type: 'loft', sections: [rect(0, 116, 122), rect(18, 113, 119), rect(40, 102, 108), rect(h, 86, 90)], closed: true, smooth: false } },
+      { geometry: { type: 'extrude', shape: ccw([[-86, h - 2], [86, h - 2], [86, h + 6], [-86, h + 6]]), depth: 180, bevel: 2 } },
+      { geometry: boss, position: [0, h + 4, -half] },
+      { geometry: boss, position: [0, h + 4, half] },
+    ],
+  }
+}
+
+/** 클러치·제너레이터 커버. lathe 축이 +y라 부품 rot [±π/2, 0, 0]으로 눕히면 z축 커버가 된다. */
+export function roundCover(r: number, depth: number): Geometry {
+  const profile: [number, number][] = [
+    [0, 0], [r, 0], [r * 1.03, depth * 0.34], [r * 0.94, depth * 0.66],
+    [r * 0.72, depth * 0.88], [r * 0.34, depth], [0, depth * 0.96],
+  ]
+  return {
+    type: 'composite',
+    children: [
+      { geometry: { type: 'lathe', profile, segments: 36 } },
+      // 가운데 점검 캡
+      { geometry: { type: 'lathe', segments: 20, profile: [[0, 0], [r * 0.3, 0], [r * 0.27, 9], [0, 11]] }, position: [0, depth * 0.9, 0] },
+    ],
+  }
+}
+
+/** 피스톤: 스커트 → 링 홈 3줄 → 크라운. 원점은 스커트 밑면이고 +y가 실린더 축이다. */
+export function pistonGeometry(r = BORE / 2, h = 62): Geometry {
+  return {
+    type: 'lathe',
+    segments: 28,
+    profile: [
+      [0, 0], [r, 0], [r, 34], [r - 2, 34], [r - 2, 40], [r, 40],
+      [r, 44], [r - 2, 44], [r - 2, 48], [r, 48],
+      [r, h - 5], [r - 9, h], [0, h],
+    ],
+  }
+}
+
+/** 크랭크 웹(카운터웨이트). 눈물방울 윤곽을 z로 밀어낸다 — 좁은 쪽(+x)이 크랭크핀이다. */
+export function crankWebGeometry(r = 60, pinR = 26): Geometry {
+  const shape = ccw([
+    [pinR + 16, 20], [26, 40], [-6, r * 0.86], [-34, r],
+    [-r, 26], [-r, -26], [-34, -r], [-6, -r * 0.86], [26, -40], [pinR + 16, -20],
+  ])
+  return { type: 'extrude', shape, depth: 34, bevel: 3 }
+}
+
+// --- 배기 --------------------------------------------------------------------
+// 경로는 차체 절대 좌표로 적고 첫 점(= 부품 마운트)을 빼서 상대 좌표로 넘긴다.
+// 좌우 헤더가 서로 다른 경로를 타므로 인스턴스마다 geometry를 따로 준다.
+
+/** 배기 헤더 중심선. 포트에서 나와 엔진 앞을 타고 내려가 집합부 첫 점에서 만난다.
+ *  프레임 가로대(200, 300, |z|<=138, r12)를 피하려고 y≈300 구간은 x를 150 근처로 당겼다. */
+export function exhaustHeaderPath(side: 1 | -1): Vec3[] {
+  const port = tilt(120, 260, 42 * side)
+  return side === 1
+    ? [port, [120, 590, 52], [152, 505, 68], [170, 432, 84], [168, 346, 92], [145, 292, 94], [162, 238, 86], [180, 210, 76]]
+    : [port, [120, 590, -52], [152, 505, -70], [170, 432, -86], [166, 350, -76], [148, 296, -30], [158, 240, 24], [180, 210, 72]]
+}
+
+/** 배기 헤더 한 본. 원점은 배기 포트(경로 첫 점). */
+export function exhaustHeader(side: 1 | -1): Geometry {
+  const pts = exhaustHeaderPath(side)
+  const to = sub(pts[0])
+  return { type: 'tube', radius: 19, radial: 14, segments: 140, path: pts.map(to) }
+}
+
+/** 집합부 중심선. 엔진 밑을 지나 오른쪽 머플러 입구까지. 오일팬(y 230..280)을 밑으로 비껴간다. */
+export const EXHAUST_COLLECTOR_PATH: Vec3[] = [
+  [180, 206, 75], [40, 188, 78], [-140, 190, 92], [-300, 196, 128], [-410, 220, 168], [-448, 238, 186],
+]
+
+/** 배기 집합부. 원점은 경로 첫 점 = 헤더 두 본이 만나는 자리. */
+export function exhaustCollector(): Geometry {
+  const to = sub(EXHAUST_COLLECTOR_PATH[0])
+  return { type: 'tube', radius: 27, radial: 14, segments: 140, path: EXHAUST_COLLECTOR_PATH.map(to) }
+}
+
+/** 머플러 캔. lathe 축이 +y라 부품 rot [0, 0, π/2 - ε]로 뒤쪽·약간 위로 눕힌다. 원점은 입구. */
+export function mufflerGeometry(len = 420): Geometry {
+  const profile: [number, number][] = [
+    [0, 0], [28, 0], [33, 8], [44, 28], [52, 70], [55, 150],
+    [55, len * 0.78], [51, len - 38], [45, len - 12], [40, len - 4], [0, len],
+  ]
+  return { type: 'lathe', profile, segments: 32 }
+}
+
+// --- 냉각 --------------------------------------------------------------------
+
+/** 라디에이터 호스. 차체 절대 좌표 경로를 받아 첫 점 기준 tube로 바꾼다. */
+export function radiatorHose(path: Vec3[], radius = 15): Geometry {
+  const to = sub(path[0])
+  return { type: 'tube', radius, radial: 12, segments: Math.max(32, path.length * 16), path: path.map(to) }
+}
+
+/** 라디에이터: 코어(extrude) + 좌우 탱크(lathe) + 가로 핀 리브. 원점은 코어 밑면 중앙,
+ *  x가 두께 t, y가 높이 h, z가 폭 w다. */
+export function radiatorCore(h: number, w: number, t: number, ribs = 9): Geometry {
+  const halfZ = w / 2
+  const coreW = w - 40
+  const tank: Geometry = {
+    type: 'lathe',
+    segments: 20,
+    profile: [[0, 0], [t * 0.5, 0], [t * 0.62, h * 0.05], [t * 0.62, h * 0.95], [t * 0.5, h], [0, h]],
+  }
+  const children: CompositeChild[] = [
+    { geometry: { type: 'extrude', shape: ccw([[-t / 2, 0], [t / 2, 0], [t / 2, h], [-t / 2, h]]), depth: coreW, bevel: 2 }, material: 'radiator_core' },
+    { geometry: tank, position: [0, 0, halfZ - t * 0.6] },
+    { geometry: tank, position: [0, 0, -(halfZ - t * 0.6)] },
+  ]
+  for (let i = 0; i < ribs; i++) {
+    const y = h * ((i + 0.5) / ribs) - 3
+    children.push({ geometry: { type: 'extrude', shape: ccw([[-t / 2 - 2, y], [t / 2 + 2, y], [t / 2 + 2, y + 6], [-t / 2 - 2, y + 6]]), depth: coreW, bevel: 1 } })
+  }
+  return { type: 'composite', children }
+}
+
+/** 낫 모양 팬 블레이드 윤곽 (xy 평면, 원점이 팬 중심) */
+function fanBlade(r0: number, r1: number, w0: number, w1: number, sweep: number): [number, number][] {
+  const n = 6
+  const lead: [number, number][] = []
+  const trail: [number, number][] = []
+  for (let i = 0; i <= n; i++) {
+    const s = i / n
+    const r = r0 + (r1 - r0) * s
+    const a = sweep * s
+    const half = (w0 + (w1 - w0) * s) / r / 2
+    lead.push([r * Math.cos(a + half), r * Math.sin(a + half)])
+    trail.push([r * Math.cos(a - half), r * Math.sin(a - half)])
+  }
+  return ccw([...lead, ...trail.reverse()])
+}
+
+/** 냉각 팬: lathe 허브 + extrude 블레이드 + 슈라우드 링. 로컬 축이 z이고 원점이 팬 중심이라
+ *  부품 rot [0, π/2, 0]으로 축을 x(진행 방향)로 눕힌다. */
+export function coolingFan(tip = 96, blades = 7): Geometry {
+  const hub: [number, number][] = [[0, -11], [30, -11], [34, -5], [34, 6], [26, 11], [0, 11]]
+  const children: CompositeChild[] = [
+    { geometry: { type: 'lathe', profile: hub, segments: 24 }, rotation: [Math.PI / 2, 0, 0] },
+    {
+      geometry: { type: 'lathe', segments: 36, profile: [[tip + 2, -12], [tip + 9, -12], [tip + 9, 12], [tip + 2, 12], [tip + 2, -12]] },
+      rotation: [Math.PI / 2, 0, 0],
+    },
+  ]
+  const blade: Geometry = { type: 'extrude', shape: fanBlade(30, tip, 18, 36, 0.55), depth: 6, bevel: 1.2 }
+  for (let i = 0; i < blades; i++) {
+    children.push({ geometry: blade, rotation: [0, 0, (i / blades) * Math.PI * 2] })
+  }
   return { type: 'composite', children }
 }

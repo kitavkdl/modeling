@@ -83,3 +83,34 @@ export function assemblyBounds(parts: PartDef[], exclude: string[] = ['mirror'])
   }
   return { min: out.min.toArray() as Vec3, max: out.max.toArray() as Vec3 }
 }
+
+export interface TubeSample {
+  /** 월드 좌표(mm) */
+  point: Vec3
+  /** 이 점이 속한 tube의 반지름(mm) */
+  radius: number
+}
+
+/** 인스턴스 안의 모든 tube 중심선을 월드 좌표로 샘플링한다. composite 안쪽까지 훑는다.
+ *  렌더러와 같은 CatmullRomCurve3('centripetal')를 쓰므로 실제 관 위치와 어긋나지 않는다. */
+export function tubeSamples(inst: PartInstance, per = 120): TubeSample[] {
+  const out: TubeSample[] = []
+  const walk = (g: Geometry, matrix: THREE.Matrix4) => {
+    if (g.type === 'composite') {
+      for (const c of g.children) walk(c.geometry, matrix.clone().multiply(childMatrix(c.position, c.rotation, c.scale)))
+      return
+    }
+    if (g.type !== 'tube') return
+    const curve = new THREE.CatmullRomCurve3(g.path.map(([x, y, z]) => new THREE.Vector3(x, y, z)), g.closed ?? false, 'centripetal')
+    for (const p of curve.getPoints(per)) {
+      out.push({ point: p.applyMatrix4(matrix).toArray() as Vec3, radius: g.radius })
+    }
+  }
+  walk(inst.geometry, childMatrix(inst.mountPosition, inst.mountRotation))
+  return out
+}
+
+/** 여러 부품의 tube 샘플을 한 번에 */
+export function partTubeSamples(parts: PartDef[], per = 120): TubeSample[] {
+  return parts.flatMap((p) => p.instances.flatMap((i) => tubeSamples(i, per)))
+}

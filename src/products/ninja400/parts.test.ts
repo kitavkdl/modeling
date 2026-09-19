@@ -1,36 +1,15 @@
 import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
-import type { CompositeChild, PartInstance } from '../../engine/types'
+import type { CompositeChild } from '../../engine/types'
 import { validateGeometry } from '../../engine/types'
 import { PARTS, PART_BY_ID, PROPS, STATIONS } from './parts'
 import { NINJA_MATERIALS } from './materials'
-import { assemblyBounds } from './test-utils'
+import { assemblyBounds, instanceBounds, partTubeSamples, tubeSamples } from './test-utils'
 
-/** 헤더 인스턴스의 composite children을 root(mountPosition/mountRotation) 아래 Object3D로 붙이고,
- *  각 원통 축을 10mm 간격으로 샘플링해 월드 좌표 배열을 돌려준다. */
-function sampleHeaderAxis(inst: PartInstance): THREE.Vector3[] {
-  const root = new THREE.Object3D()
-  root.position.fromArray(inst.mountPosition)
-  root.rotation.fromArray(inst.mountRotation)
-  root.updateMatrixWorld(true)
+const vec = (p: [number, number, number]) => new THREE.Vector3(...p)
 
-  const geometry = inst.geometry
-  if (geometry.type !== 'composite') throw new Error('exhaust_header geometry must be composite')
-  const points: THREE.Vector3[] = []
-  for (const child of geometry.children as CompositeChild[]) {
-    if (child.geometry.type !== 'cylinder') continue
-    const obj = new THREE.Object3D()
-    if (child.position) obj.position.fromArray(child.position)
-    if (child.rotation) obj.rotation.fromArray(child.rotation)
-    root.add(obj)
-    root.updateMatrixWorld(true)
-    const height = child.geometry.height
-    for (let y = 0; y <= height; y += 10) {
-      points.push(obj.localToWorld(new THREE.Vector3(0, y, 0)))
-    }
-  }
-  return points
-}
+/** 프레임·서브프레임 튜브 중심선 샘플 (월드 mm) */
+const frameSamples = () => partTubeSamples([PART_BY_ID.main_frame, PART_BY_ID.subframe], 200)
 
 describe('ninja400 parts', () => {
   it('has unique part and instance ids', () => {
@@ -143,31 +122,77 @@ describe('ninja400 parts', () => {
     expect(paintRank('front_fender')).toBe(0)
     expect(paintRank('tail_cowl')).toBeGreaterThan(paintRank('fuel_tank'))
   })
-  it('exhaust header clears the crankcase and both branches converge on the collector', () => {
+  it('배기 헤더 tube 경로가 크랭크케이스를 비껴가고 두 본이 집합부 첫 점에서 만난다', () => {
     const header = PART_BY_ID.exhaust_header
     const l = header.instances.find((i) => i.id === 'exhaust_header:l')
     const r = header.instances.find((i) => i.id === 'exhaust_header:r')
     if (!l || !r) throw new Error('exhaust_header l/r instances missing')
+    // 좌우가 서로 다른 경로를 타므로 인스턴스마다 geometry가 따로 있어야 한다
+    expect(l.geometry).not.toBe(r.geometry)
+    expect(l.mountRotation).toEqual([0, 0, 0])
+    expect(r.mountRotation).toEqual([0, 0, 0])
 
-    const lPts = sampleHeaderAxis(l)
-    const rPts = sampleHeaderAxis(r)
+    const lPts = tubeSamples(l, 200)
+    const rPts = tubeSamples(r, 200)
+    expect(lPts.length).toBeGreaterThan(100)
 
-    // 크랭크케이스 박스 (x -330..90, y 280..550, |z|<=190)를 반지름 19만큼 확장한 범위
-    const inCrankcase = (p: THREE.Vector3) => p.x >= -349 && p.x <= 109 && p.y >= 261 && p.y <= 569 && Math.abs(p.z) <= 209
-    for (const p of [...lPts, ...rPts]) expect(inCrankcase(p), `(${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)})`).toBe(false)
+    // 크랭크케이스 박스 (x -330..90, y 280..550, |z|<=190)를 관 반지름만큼 넓힌 범위 밖
+    for (const { point: [x, y, z], radius } of [...lPts, ...rPts]) {
+      const inside = x >= -330 - radius && x <= 90 + radius && y >= 280 - radius && y <= 550 + radius && Math.abs(z) <= 190 + radius
+      expect(inside, `(${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)})`).toBe(false)
+    }
 
-    // 둘째 원통(파이프) 끝점이 집합부 축 위 점에서 35mm 이내
-    const collector = PART_BY_ID.exhaust_collector
-    const lEnd = lPts[lPts.length - 1]
-    const rEnd = rPts[rPts.length - 1]
-    const collectorAxisPoint = (endX: number) => new THREE.Vector3(endX, collector.mountPosition[1], collector.mountPosition[2])
-    expect(lEnd.distanceTo(collectorAxisPoint(lEnd.x))).toBeLessThanOrEqual(35)
-    expect(rEnd.distanceTo(collectorAxisPoint(rEnd.x))).toBeLessThanOrEqual(35)
+    // 마지막 점이 집합부 경로 첫 점에서 40mm 이내
+    const collectorStart = vec(PART_BY_ID.exhaust_collector.instances[0].mountPosition)
+    for (const pts of [lPts, rPts]) {
+      expect(vec(pts[pts.length - 1].point).distanceTo(collectorStart)).toBeLessThanOrEqual(40)
+    }
 
-    // l·r 샘플 간 최소 거리
+    // 합류 전(y >= 280)에는 두 본이 떨어져 있다
     let minDist = Infinity
-    for (const a of lPts) for (const b of rPts) minDist = Math.min(minDist, a.distanceTo(b))
+    for (const a of lPts) {
+      if (a.point[1] < 280) continue
+      for (const b of rPts) {
+        if (b.point[1] < 280) continue
+        minDist = Math.min(minDist, vec(a.point).distanceTo(vec(b.point)))
+      }
+    }
     expect(minDist).toBeGreaterThanOrEqual(38)
+  })
+  it('배기가 프레임 튜브를 피하고 라디에이터 호스가 엔진을 파고들지 않는다', () => {
+    const frame = frameSamples()
+    const exhaust = partTubeSamples([PART_BY_ID.exhaust_header, PART_BY_ID.exhaust_collector], 200)
+    let worst = Infinity
+    let where = ''
+    for (const e of exhaust) {
+      for (const f of frame) {
+        const gap = vec(e.point).distanceTo(vec(f.point)) - e.radius - f.radius
+        if (gap < worst) {
+          worst = gap
+          where = `(${e.point.map((v) => v.toFixed(0)).join(', ')})`
+        }
+      }
+    }
+    expect(worst, `배기가 프레임 튜브에 ${worst.toFixed(1)}mm ${where}`).toBeGreaterThan(0)
+
+    // 라디에이터 호스도 크랭크케이스를 파고들지 않는다
+    for (const { point: [x, y, z], radius } of partTubeSamples([PART_BY_ID.radiator_hose], 200)) {
+      const inside = x >= -330 - radius && x <= 90 + radius && y >= 280 - radius && y <= 550 + radius && Math.abs(z) <= 190 + radius
+      expect(inside, `hose (${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)})`).toBe(false)
+    }
+  })
+  it('라디에이터가 프레임 튜브 안쪽에 들어간다', () => {
+    // Task 8에서 대각 브레이스([120,780,175]→[225,640,152]→[330,500,128])가 라디에이터를 스쳤다.
+    const b = instanceBounds(PART_BY_ID.radiator.instances[0])
+    for (const { point: [x, y, z], radius } of frameSamples()) {
+      const inside =
+        x >= b.min[0] - radius && x <= b.max[0] + radius &&
+        y >= b.min[1] - radius && y <= b.max[1] + radius &&
+        z >= b.min[2] - radius && z <= b.max[2] + radius
+      expect(inside, `frame (${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)}) in radiator`).toBe(false)
+    }
+    // 코어가 엔진 앞이고 크랭크케이스(x <= 90)와 떨어져 있다
+    expect(b.min[0]).toBeGreaterThan(90)
   })
   it('주요 부품의 형상이 곡면 프리미티브를 쓴다', () => {
     const uses = (id: string, type: string) => JSON.stringify(PART_BY_ID[id].geometry).includes(`"type":"${type}"`)
@@ -182,6 +207,32 @@ describe('ninja400 parts', () => {
     expect(uses('front_disc', 'extrude')).toBe(true)
     expect(uses('rear_disc', 'extrude')).toBe(true)
     expect(uses('fork', 'lathe')).toBe(true)
+    // Task 9 — 엔진 외관·배기·냉각
+    expect(uses('crankcase_lower', 'extrude')).toBe(true)
+    expect(uses('crankcase_upper', 'extrude')).toBe(true)
+    expect(uses('crankshaft', 'extrude')).toBe(true)
+    expect(uses('piston', 'lathe')).toBe(true)
+    expect(uses('cylinder_block', 'lathe')).toBe(true)
+    expect(uses('cylinder_block', 'extrude')).toBe(true)
+    expect(uses('cylinder_head', 'extrude')).toBe(true)
+    expect(uses('cam_cover', 'loft')).toBe(true)
+    expect(uses('clutch_cover', 'lathe')).toBe(true)
+    expect(uses('generator_cover', 'lathe')).toBe(true)
+    expect(uses('exhaust_header', 'tube')).toBe(true)
+    expect(uses('exhaust_collector', 'tube')).toBe(true)
+    expect(uses('muffler', 'lathe')).toBe(true)
+    expect(uses('radiator', 'extrude')).toBe(true)
+    expect(uses('radiator_hose', 'tube')).toBe(true)
+    expect(uses('cooling_fan', 'extrude')).toBe(true)
+    // 크랭크케이스가 프레임 여유 테스트의 기준 봉투(x -330..90, y 280..550, |z| <= 190) 안에 든다.
+    // 둔각 모서리에서 베벨 마이터가 bevelSize를 아주 조금 넘어서 x만 1mm 여유를 둔다.
+    const lower = instanceBounds(PART_BY_ID.crankcase_lower.instances[0])
+    const upper = instanceBounds(PART_BY_ID.crankcase_upper.instances[0])
+    expect(lower.min[0]).toBeGreaterThanOrEqual(-331)
+    expect(upper.max[0]).toBeLessThanOrEqual(91)
+    expect(lower.min[1]).toBeCloseTo(280, 1)
+    expect(upper.max[1]).toBeCloseTo(550, 1)
+    for (const b of [lower, upper]) expect(Math.max(-b.min[2], b.max[2])).toBeLessThanOrEqual(190.01)
   })
   it('전체 장착 bbox가 실물 외곽(1990×710×1120, ±10%) 안이다', () => {
     // 미러는 기본으로 빠진다(assemblyBounds의 exclude 기본값).
