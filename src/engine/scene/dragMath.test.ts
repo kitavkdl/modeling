@@ -40,4 +40,13 @@ describe('resolveDragTargets (screen space)', () => {
     ]
     expect(resolveDragTargets(p, { x: 0, y: 0 }, ghosts, { p_0: { instanceId: 'p_0', at: 0 } }).paint).toEqual(['p_1'])
   })
+  it('다수 부품: 반경 안에 여럿이면 가장 가까운 하나만 paint (뒷줄 겹침 방지)', () => {
+    const p = part(3)
+    const ghosts = [
+      { id: 'p_0', px: { x: 2, y: 0 }, radiusPx: 20 },
+      { id: 'p_1', px: { x: 6, y: 6 }, radiusPx: 20 },
+      { id: 'p_2', px: { x: 50, y: 0 }, radiusPx: 20 },
+    ]
+    expect(resolveDragTargets(p, { x: 0, y: 0 }, ghosts, {}).paint).toEqual(['p_0'])
+  })
 })
