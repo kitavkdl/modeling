@@ -1,4 +1,4 @@
-import { PARTS } from '../data/parts'
+import { PARTS } from '../products/keyboard/parts'
 import { isPartAvailable, isPartComplete, mountedCount, useAssembly } from '../store/assembly'
 
 /** 화면 하단 부품 트레이. 장착 가능한 부품만 활성. */

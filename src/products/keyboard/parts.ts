@@ -2,9 +2,10 @@
 // 모든 치수와 좌표는 mm. 씬에서는 MM(=0.1)을 곱해 1 unit = 10mm로 쓴다.
 // 좌표계: x 좌우(+x 오른쪽), y 상하(+y 위), z 앞뒤(+z 사용자 쪽). 케이스 바닥이 y=0.
 
-export const MM = 0.1
-
-export type Vec3 = [number, number, number]
+import { MM, type Geometry, type PartDef, type PartInstance, type StationDef, type Vec3 } from '../../engine/types'
+import { frame, gasketSet, keycap as keycapGeom, stabilizer as stabilizerGeom, switchBody, tub } from './geometry'
+export { MM }
+export type { Vec3 }
 
 // ---------------------------------------------------------------------------
 // 키 배열
@@ -153,70 +154,6 @@ export const MOUNT_STYLE = 'gasket' as const
 /** USB-C 포트 위치 (뒷벽 바깥 면 기준) */
 export const USB_PORT: Vec3 = [-90, BOTTOM_H / 2 + 2, -CASE_D / 2]
 
-// ---------------------------------------------------------------------------
-// 지오메트리
-// ---------------------------------------------------------------------------
-
-export type Geometry =
-  | { type: 'box'; size: Vec3 }
-  | { type: 'roundedBox'; size: Vec3; radius: number }
-  /** 바닥판 + 벽 4개 (하부 케이스) */
-  | { type: 'tub'; size: Vec3; wall: number; floor: number; radius: number }
-  /** 벽 4개 (상부 케이스) */
-  | { type: 'frame'; size: Vec3; wall: number; radius: number }
-  /** 하우징 2개 + 와이어 */
-  | { type: 'stabilizer'; span: number; housing: Vec3; wireR: number }
-  /** 몸통 + 스템 */
-  | { type: 'switch'; body: Vec3; stemR: number; stemH: number }
-  /** 사다리꼴 키캡 (밑면 wb×db, 윗면 wt×dt) */
-  | { type: 'keycap'; bottom: [number, number]; top: [number, number]; h: number }
-  /** 얇은 스트립 4개 */
-  | { type: 'gasketSet'; strips: Array<{ pos: Vec3; size: Vec3 }> }
-
-export type MaterialKind = 'aluminum' | 'foam' | 'pcb' | 'plastic' | 'keycap' | 'rubber' | 'glass'
-
-export interface PartInstance {
-  /** 인스턴스 고유 id. count=1이면 부품 id와 같다. */
-  id: string
-  mountPosition: Vec3
-  mountRotation: Vec3
-  geometry: Geometry
-  /** 키캡·스위치라면 대응 키 id */
-  keyId?: string
-  /** 순차 장착·웨이브 순서 (0~1) */
-  order: number
-}
-
-export interface CameraView {
-  /** 방위각(도). 0 = 정면(+z), 양수 = 오른쪽으로 */
-  azimuth: number
-  /** 극각(도). 0 = 수직 위, 90 = 수평 */
-  polar: number
-  /** 거리 (mm) */
-  distance: number
-}
-
-export interface PartDef {
-  id: string
-  nameKo: string
-  nameEn: string
-  geometry: Geometry
-  restPosition: Vec3
-  mountPosition: Vec3
-  mountRotation: Vec3
-  requires: string[]
-  count: number
-  material: MaterialKind
-  /** 샌드위치 소속. 안착(gasket) 전까지 ASSEMBLY_LIFT만큼 띄운다. */
-  subassembly?: boolean
-  /** 이 부품이 장착되면 샌드위치가 케이스에 내려앉는다. */
-  seatsAssembly?: boolean
-  instances: PartInstance[]
-  cameraView: CameraView
-  /** 트레이에 보여줄 한 줄 안내. 동사 하나로 끝낸다. */
-  hint: string
-}
-
 // 대기 위치. 큰 부품은 케이스 뒤쪽, 작은 부품은 케이스 오른쪽 옆.
 // 뒤쪽은 공중에 뜬 샌드위치에 가려질 수 있어 작은 부품은 옆에 둔다.
 const REST_Z = -130
@@ -249,13 +186,7 @@ const bottomCase = single({
   id: 'bottom_case',
   nameKo: '하부 케이스',
   nameEn: 'Bottom Case',
-  geometry: {
-    type: 'tub',
-    size: [CASE_W, BOTTOM_H, CASE_D],
-    wall: CASE_WALL,
-    floor: BOTTOM_FLOOR_T,
-    radius: CASE_RADIUS,
-  },
+  geometry: tub([CASE_W, BOTTOM_H, CASE_D], CASE_WALL, BOTTOM_FLOOR_T, CASE_RADIUS),
   mountPosition: [0, 0, 0],
   mountRotation: [0, 0, 0],
   restPosition: [0, REST_Y, REST_Z - 30],
@@ -289,14 +220,14 @@ const stabilizers: PartDef = {
   id: 'stabilizer',
   nameKo: '스태빌라이저',
   nameEn: 'Stabilizer',
-  geometry: { type: 'stabilizer', span: 24, housing: stabilizerHousing, wireR: 0.8 },
+  geometry: stabilizerGeom(24, stabilizerHousing, 0.8),
   restPosition: REST_SIDE,
   mountPosition: [0, Y_PCB + PCB_T, 0],
   mountRotation: [0, 0, 0],
   requires: ['bottom_foam'],
   count: stabilizerKeys.length,
   material: 'plastic',
-  subassembly: true,
+  station: 'sandwich',
   cameraView: { azimuth: -15, polar: 42, distance: 520 },
   hint: '스태빌라이저 장착',
   instances: stabilizerKeys.map((k) => {
@@ -305,10 +236,10 @@ const stabilizers: PartDef = {
     const span = k.w >= 6 ? 100 : 24
     return {
       id: `stabilizer:${k.id}`,
-      keyId: k.id,
+      tag: k.id,
       mountPosition: [x, Y_PCB + PCB_T, z],
       mountRotation: [0, 0, 0],
-      geometry: { type: 'stabilizer', span, housing: stabilizerHousing, wireR: 0.8 },
+      geometry: stabilizerGeom(span, stabilizerHousing, 0.8),
       order: keyWaveOrder(k),
     }
   }),
@@ -323,7 +254,7 @@ const pcb = single({
   mountRotation: [0, 0, 0],
   requires: ['stabilizer'],
   material: 'pcb',
-  subassembly: true,
+  station: 'sandwich',
   cameraView: { azimuth: 25, polar: 48, distance: 560 },
   hint: 'PCB 장착',
 })
@@ -337,7 +268,7 @@ const pcbFoam = single({
   mountRotation: [0, 0, 0],
   requires: ['pcb'],
   material: 'foam',
-  subassembly: true,
+  station: 'sandwich',
   cameraView: { azimuth: 25, polar: 48, distance: 560 },
   hint: 'PCB 폼 장착',
 })
@@ -351,17 +282,12 @@ const plate = single({
   mountRotation: [0, 0, 0],
   requires: ['pcb_foam'],
   material: 'aluminum',
-  subassembly: true,
+  station: 'sandwich',
   cameraView: { azimuth: 25, polar: 48, distance: 560 },
   hint: '플레이트 장착',
 })
 
-const switchGeometry: Geometry = {
-  type: 'switch',
-  body: [SWITCH_BODY, SWITCH_H, SWITCH_BODY],
-  stemR: STEM_R,
-  stemH: STEM_H,
-}
+const switchGeometry: Geometry = switchBody([SWITCH_BODY, SWITCH_H, SWITCH_BODY], STEM_R, STEM_H)
 const switches: PartDef = {
   id: 'switch',
   nameKo: '스위치 (리니어 45g)',
@@ -373,14 +299,14 @@ const switches: PartDef = {
   requires: ['plate'],
   count: KEY_COUNT,
   material: 'plastic',
-  subassembly: true,
+  station: 'sandwich',
   cameraView: { azimuth: 0, polar: 35, distance: 500 },
   hint: '스위치 장착',
   instances: KEY_LAYOUT.map((k) => {
     const [x, z] = keyCenter(k)
     return {
       id: `switch:${k.id}`,
-      keyId: k.id,
+      tag: k.id,
       mountPosition: [x, Y_SWITCH, z],
       mountRotation: [0, 0, 0],
       geometry: switchGeometry,
@@ -407,13 +333,13 @@ const gasket = single({
   id: 'gasket',
   nameKo: '가스켓 안착',
   nameEn: 'Gasket Seat',
-  geometry: { type: 'gasketSet', strips: gasketStrips },
+  geometry: gasketSet(gasketStrips),
   restPosition: [REST_SIDE[0] + 80, REST_Y, 0],
   mountPosition: [0, Y_GASKET, 0],
   mountRotation: [0, 0, 0],
   requires: ['switch'],
   material: 'rubber',
-  seatsAssembly: true,
+  marries: 'sandwich',
   cameraView: { azimuth: 35, polar: 62, distance: 600 },
   hint: '조립체 안착',
 })
@@ -422,12 +348,7 @@ const topCase = single({
   id: 'top_case',
   nameKo: '상부 케이스',
   nameEn: 'Top Case',
-  geometry: {
-    type: 'frame',
-    size: [CASE_W, TOP_H, CASE_D],
-    wall: (CASE_W - PLATE_W) / 2 - 2,
-    radius: CASE_RADIUS,
-  },
+  geometry: frame([CASE_W, TOP_H, CASE_D], (CASE_W - PLATE_W) / 2 - 2),
   mountPosition: [0, Y_TOP_CASE, 0],
   mountRotation: [0, 0, 0],
   requires: ['gasket'],
@@ -439,12 +360,7 @@ const topCase = single({
 function keycapGeometry(k: KeyDef): Geometry {
   const w = k.w * U - KEYCAP_GAP * 2
   const d = U - KEYCAP_GAP * 2
-  return {
-    type: 'keycap',
-    bottom: [w, d],
-    top: [w - KEYCAP_TOP_INSET * 2, d - KEYCAP_TOP_INSET * 2],
-    h: KEYCAP_H,
-  }
+  return keycapGeom([w, d], [w - KEYCAP_TOP_INSET * 2, d - KEYCAP_TOP_INSET * 2], KEYCAP_H)
 }
 const keycaps: PartDef = {
   id: 'keycap',
@@ -463,7 +379,7 @@ const keycaps: PartDef = {
     const [x, z] = keyCenter(k)
     return {
       id: `keycap:${k.id}`,
-      keyId: k.id,
+      tag: k.id,
       mountPosition: [x, Y_KEYCAP, z],
       mountRotation: [0, 0, 0],
       geometry: keycapGeometry(k),
@@ -471,6 +387,9 @@ const keycaps: PartDef = {
     }
   }),
 }
+
+/** 샌드위치(스태빌라이저~스위치)는 케이스 위 ASSEMBLY_LIFT에서 조립되고 가스켓 안착 시 내려앉는다 */
+export const STATIONS: StationDef[] = [{ id: 'sandwich', nameKo: '샌드위치', offset: [0, ASSEMBLY_LIFT, 0] }]
 
 /** 조립 순서 = 배열 순서 */
 export const PARTS: PartDef[] = [

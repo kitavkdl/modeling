@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { PARTS, PART_BY_ID, partOfInstance, type PartDef, type Vec3 } from '../data/parts'
+import type { PartDef } from '../engine/types'
+import { PARTS, PART_BY_ID, partOfInstance, type Vec3 } from '../products/keyboard/parts'
 
 export type Phase =
   /** 부품 장착 중 */

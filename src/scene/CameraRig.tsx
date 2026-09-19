@@ -3,7 +3,8 @@ import { OrbitControls } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
-import { ASSEMBLY_LIFT, MM, PART_BY_ID, type CameraView } from '../data/parts'
+import type { CameraView } from '../engine/types'
+import { ASSEMBLY_LIFT, MM, PART_BY_ID } from '../products/keyboard/parts'
 import { useAssembly } from '../store/assembly'
 import { easeInOutCubic } from '../utils/easing'
 import { cameraTween, controlsRef } from './controlsRef'
@@ -65,7 +66,7 @@ export function CameraRig() {
     const viewFor = (partId: string, mounted: Record<string, unknown>) => {
       const part = PART_BY_ID[partId]
       const seated = Boolean(mounted.gasket)
-      const lift = part.subassembly && !seated ? ASSEMBLY_LIFT : 0
+      const lift = Boolean(part.station) && !seated ? ASSEMBLY_LIFT : 0
       const y = (part.mountPosition[1] + lift) * MM
       startTween(part.cameraView, new THREE.Vector3(0, y * 0.6, 0))
     }

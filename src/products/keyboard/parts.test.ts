@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { validateGeometry } from '../../engine/types'
 import {
   KEY_COUNT,
   KEY_LAYOUT,
@@ -6,6 +7,7 @@ import {
   PARTS,
   PART_BY_ID,
   STABILIZED_KEYS,
+  STATIONS,
   findInstance,
   keyCenter,
   partOfInstance,
@@ -42,12 +44,25 @@ describe('parts data', () => {
     for (const p of PARTS.slice(1)) expect(p.requires.length).toBeGreaterThan(0)
   })
 
-  it('exactly one part seats the subassembly, and it comes after every subassembly part', () => {
-    const seatIdx = PARTS.findIndex((p) => p.seatsAssembly)
-    expect(PARTS.filter((p) => p.seatsAssembly)).toHaveLength(1)
-    PARTS.forEach((p, i) => {
-      if (p.subassembly) expect(i).toBeLessThan(seatIdx)
-    })
+  it('every geometry validates', () => {
+    for (const p of PARTS) {
+      expect(validateGeometry(p.geometry), p.id).toEqual([])
+      for (const inst of p.instances) expect(validateGeometry(inst.geometry), inst.id).toEqual([])
+    }
+  })
+
+  it('uses the sandwich station and gasket marries it after all station parts', () => {
+    expect(STATIONS.map((s) => s.id)).toEqual(['sandwich'])
+    const stationIdx = PARTS.map((p, i) => (p.station === 'sandwich' ? i : -1)).filter((i) => i >= 0)
+    const marryIdx = PARTS.findIndex((p) => p.marries === 'sandwich')
+    expect(stationIdx.length).toBe(5)
+    expect(Math.max(...stationIdx)).toBeLessThan(marryIdx)
+    expect(PARTS[marryIdx].id).toBe('gasket')
+  })
+
+  it('keycap instances use frustum geometry and switches are composites', () => {
+    expect(PART_BY_ID.keycap.instances[0].geometry.type).toBe('frustum')
+    expect(PART_BY_ID.switch.geometry.type).toBe('composite')
   })
 
   it('stabilizer keys exist in the layout and count matches', () => {
@@ -80,7 +95,7 @@ describe('parts data', () => {
 
   it('resolves instances back to their part', () => {
     expect(partOfInstance('switch:space').id).toBe('switch')
-    expect(findInstance('keycap:esc').keyId).toBe('esc')
+    expect(findInstance('keycap:esc').tag).toBe('esc')
     expect(partOfInstance('pcb').id).toBe('pcb')
     expect(() => findInstance('switch:nope')).toThrow()
   })

@@ -1,20 +1,21 @@
 import { useEffect, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { ASSEMBLY_LIFT, MM, PARTS, PART_BY_ID, type PartDef } from '../data/parts'
+import type { PartDef } from '../engine/types'
+import { ASSEMBLY_LIFT, MM, PARTS, PART_BY_ID } from '../products/keyboard/parts'
 import { useAssembly } from '../store/assembly'
 import { easeOutBack, lerp } from '../utils/easing'
 import { GhostSet } from './Ghosts'
 import { MOUNT_MS, MountedInstanceView } from './MountedParts'
 
-const SEAT_PART_ID = PARTS.find((p) => p.seatsAssembly)?.id ?? 'gasket'
+const SEAT_PART_ID = PARTS.find((p) => p.marries === 'sandwich')?.id ?? 'gasket'
 
 /** 장착된 부품 전부 + 선택 부품의 고스트. 샌드위치는 안착 전까지 떠 있다. */
 export function Keyboard() {
   const selectedPartId = useAssembly((s) => s.selectedPartId)
   const selected = selectedPartId ? PART_BY_ID[selectedPartId] : null
-  const fixedParts = PARTS.filter((p) => !p.subassembly)
-  const liftedParts = PARTS.filter((p) => p.subassembly)
+  const fixedParts = PARTS.filter((p) => p.station !== 'sandwich')
+  const liftedParts = PARTS.filter((p) => p.station === 'sandwich')
 
   return (
     <group>
@@ -22,13 +23,13 @@ export function Keyboard() {
         {fixedParts.map((p) => (
           <MountedPart key={p.id} part={p} />
         ))}
-        {selected && !selected.subassembly ? <GhostSet part={selected} /> : null}
+        {selected && selected.station !== 'sandwich' ? <GhostSet part={selected} /> : null}
       </group>
       <LiftedGroup>
         {liftedParts.map((p) => (
           <MountedPart key={p.id} part={p} />
         ))}
-        {selected && selected.subassembly ? <GhostSet part={selected} /> : null}
+        {selected && selected.station === 'sandwich' ? <GhostSet part={selected} /> : null}
       </LiftedGroup>
     </group>
   )

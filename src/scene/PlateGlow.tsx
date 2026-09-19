@@ -1,7 +1,7 @@
 import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { LAYOUT_D, LAYOUT_W, MM, Y_KEYCAP } from '../data/parts'
+import { LAYOUT_D, LAYOUT_W, MM, Y_KEYCAP } from '../products/keyboard/parts'
 import { useAssembly } from '../store/assembly'
 import { RGB_COLOR } from './materials'
 import { BOOT_WAVE_MS, BREATH_PERIOD_MS } from './rgb'

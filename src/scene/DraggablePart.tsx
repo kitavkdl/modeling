@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
-import { ASSEMBLY_LIFT, MM, PART_BY_ID, type PartDef, type Vec3 } from '../data/parts'
+import type { PartDef } from '../engine/types'
+import { ASSEMBLY_LIFT, MM, PART_BY_ID, type Vec3 } from '../products/keyboard/parts'
 import { useAssembly } from '../store/assembly'
 import { easeOutCubic } from '../utils/easing'
 import { cancelCameraTween, setControlsEnabled } from './controlsRef'
@@ -56,7 +57,7 @@ function Draggable({ part }: { part: PartDef }) {
 
   const rest = new THREE.Vector3(part.restPosition[0] * MM, part.restPosition[1] * MM, part.restPosition[2] * MM)
   const seated = useAssembly((s) => Boolean(s.mounted.gasket))
-  const lift = part.subassembly && !seated ? ASSEMBLY_LIFT : 0
+  const lift = Boolean(part.station) && !seated ? ASSEMBLY_LIFT : 0
   /** 잡았을 때 떠 있는 높이 (units) */
   const hoverY = (part.mountPosition[1] + lift + HOVER_MM) * MM
 

@@ -1,5 +1,5 @@
 import { ContactShadows, Environment, Lightformer } from '@react-three/drei'
-import { CASE_D, CASE_W, MM } from '../data/parts'
+import { CASE_D, CASE_W, MM } from '../products/keyboard/parts'
 
 // 조명: 키라이트 1 + 림라이트 1 + 약한 환경광. 그 이상 두지 않는다.
 // 알루미늄(metalness 0.9)은 반사할 환경이 없으면 검게 보이므로, 두 조명과 같은 방향에

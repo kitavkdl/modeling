@@ -2,7 +2,7 @@
 // 나중에 실제 녹음 샘플로 교체한다. 외부에 노출하는 인터페이스는 playKeyPress 하나뿐이다.
 // 오디오 파일은 포함하지 않고 Web Audio API로 합성한다.
 
-import { isStabilizedKey } from '../data/parts'
+import { isStabilizedKey } from '../products/keyboard/parts'
 
 const DOWN_BURST_MS = 5
 const DOWN_DECAY_MS = 40

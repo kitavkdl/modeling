@@ -1,4 +1,5 @@
-import { MM, type PartDef, type PartInstance } from '../data/parts'
+import type { PartDef, PartInstance } from '../engine/types'
+import { MM } from '../products/keyboard/parts'
 import { useAssembly } from '../store/assembly'
 import { PartGeometry } from './PartGeometry'
 import { ghostHoverMaterial, ghostMaterial } from './materials'

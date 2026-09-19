@@ -1,10 +1,9 @@
 import * as THREE from 'three'
-import type { MaterialKind } from '../data/parts'
 
 // 재질은 공유한다. 키캡 하단 발광 슬랩만 인스턴스별로 만든다 (rgb.ts 참고).
-const cache = new Map<MaterialKind, THREE.MeshStandardMaterial>()
+const cache = new Map<string, THREE.MeshStandardMaterial>()
 
-const SPECS: Record<MaterialKind, THREE.MeshStandardMaterialParameters> = {
+const SPECS: Record<string, THREE.MeshStandardMaterialParameters> = {
   aluminum: { color: '#8a8d93', metalness: 0.9, roughness: 0.35 },
   foam: { color: '#5c5c5e', metalness: 0, roughness: 1 },
   pcb: { color: '#111214', metalness: 0.05, roughness: 0.85 },
@@ -14,7 +13,7 @@ const SPECS: Record<MaterialKind, THREE.MeshStandardMaterialParameters> = {
   glass: { color: '#1a1b1e', metalness: 0.6, roughness: 0.1 },
 }
 
-export function materialFor(kind: MaterialKind): THREE.MeshStandardMaterial {
+export function materialFor(kind: string): THREE.MeshStandardMaterial {
   let m = cache.get(kind)
   if (!m) {
     m = new THREE.MeshStandardMaterial(SPECS[kind])

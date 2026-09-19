@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
-import { CABLE, MM } from '../data/parts'
+import { CABLE, MM } from '../products/keyboard/parts'
 import { useAssembly } from '../store/assembly'
 import { easeInOutCubic, lerp } from '../utils/easing'
 import { cableMaterial, plugMaterial } from './materials'

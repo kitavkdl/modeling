@@ -1,7 +1,8 @@
 import { useCallback, useMemo, useRef } from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
-import { ASSEMBLY_LIFT, MM, type PartDef, type PartInstance, type Vec3 } from '../data/parts'
+import type { PartDef, PartInstance } from '../engine/types'
+import { ASSEMBLY_LIFT, MM, type Vec3 } from '../products/keyboard/parts'
 import { useAssembly, type MountRecord } from '../store/assembly'
 import { easeOutBack, easeOutCubic, lerp } from '../utils/easing'
 import { playKeyPress } from '../audio/switchSound'
@@ -33,7 +34,7 @@ export function MountedInstanceView({ part, inst, record }: Props) {
   // 시작점: 드래그로 놓았다면 그 자리(record.from, 월드 mm → 그룹 로컬).
   // 아니면 단일 부품은 대기 위치에서, 다수 부품은 바로 위에서.
   const start = useMemo<Vec3>(() => {
-    const lift = part.subassembly ? ASSEMBLY_LIFT : 0
+    const lift = Boolean(part.station) ? ASSEMBLY_LIFT : 0
     if (record.from) {
       const f = record.from
       return part.count === 1 ? [f[0], f[1] - lift, f[2]] : f
@@ -67,7 +68,7 @@ export function MountedInstanceView({ part, inst, record }: Props) {
   const r = inst.mountRotation
   const material = materialFor(part.material)
   const body =
-    inst.geometry.type === 'keycap' ? (
+    inst.geometry.type === 'frustum' ? (
       <Keycap inst={inst} material={material} />
     ) : (
       <PartGeometry geometry={inst.geometry} material={material} />
@@ -86,7 +87,7 @@ function Keycap({ inst, material }: { inst: PartInstance; material: THREE.Materi
   const pressGroup = useRef<THREE.Group>(null)
   const pressAt = useRef<number | null>(null)
   const geo = inst.geometry
-  if (geo.type !== 'keycap') throw new Error('not a keycap')
+  if (geo.type !== 'frustum') throw new Error('not a keycap')
 
   useFrame(() => {
     const s = useAssembly.getState()
@@ -115,7 +116,7 @@ function Keycap({ inst, material }: { inst: PartInstance; material: THREE.Materi
       if (s.phase === 'assembly') return
       e.stopPropagation()
       pressAt.current = performance.now()
-      playKeyPress(inst.keyId ?? inst.id, 0.6 + Math.random() * 0.4)
+      playKeyPress(inst.tag ?? inst.id, 0.6 + Math.random() * 0.4)
     },
     [inst],
   )

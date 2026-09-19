@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { PARTS, PART_BY_ID } from '../data/parts'
+import { PARTS, PART_BY_ID } from '../products/keyboard/parts'
 import { availableParts, isAssemblyComplete, useAssembly } from './assembly'
 
 function mountWholePart(partId: string) {

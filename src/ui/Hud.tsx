@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { PARTS, PART_BY_ID } from '../data/parts'
+import { PARTS, PART_BY_ID } from '../products/keyboard/parts'
 import { isPartComplete, useAssembly } from '../store/assembly'
 
 function hintFor(): string {
