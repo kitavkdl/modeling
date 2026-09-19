@@ -138,12 +138,16 @@ function Draggable({ part }: { part: PartDef }) {
       cancelCameraTween()
       returning.current = null
       const plane = new THREE.Plane(up, -hoverY)
-      // 잡은 순간의 커서 교점을 기준으로 오프셋을 잡되, 높이는 hoverY로 들어 올린다
+      // 오프셋은 부품 표면의 실제 클릭 지점(e.point) 기준으로 잡는다. 이후 커서 광선과 hoverY 평면의
+      // 교점에 이 오프셋을 더하면 잡은 지점이 항상 커서 광선 위에 놓여, 들어 올려도 커서 아래에 머문다.
+      // (hoverY 평면 교점으로 오프셋을 잡으면 들어 올린 높이만큼의 시차가 화면에 그대로 남는다.)
+      const offset = new THREE.Vector3(g.position.x - e.point.x, 0, g.position.z - e.point.z)
       raycaster.setFromCamera(e.pointer, camera)
       const hit = new THREE.Vector3()
-      if (!raycaster.ray.intersectPlane(plane, hit)) hit.set(g.position.x, hoverY, g.position.z)
-      const offset = new THREE.Vector3(g.position.x - hit.x, 0, g.position.z - hit.z)
-      drag.current = { plane, offset, target: new THREE.Vector3(g.position.x, hoverY, g.position.z) }
+      const target = raycaster.ray.intersectPlane(plane, hit)
+        ? new THREE.Vector3(hit.x + offset.x, hoverY, hit.z + offset.z)
+        : new THREE.Vector3(g.position.x, hoverY, g.position.z)
+      drag.current = { plane, offset, target }
       store.getState().setDragging(true)
       document.body.style.cursor = 'grabbing'
     },
