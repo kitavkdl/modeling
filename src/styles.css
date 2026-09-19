@@ -252,3 +252,13 @@ body,
 .variant:hover { border-color: var(--fg); }
 .variant-swatch { width: 18px; height: 18px; border-radius: 2px; border: 1px solid rgba(255,255,255,0.15); }
 .hud-back { margin-top: 10px; padding-left: 0; }
+
+/* --- Model select --------------------------------------------------------- */
+.select { min-height: 100%; display: flex; flex-direction: column; justify-content: center; padding: 0 12vw; }
+.select-head { font-size: 12px; letter-spacing: 0.1em; color: var(--fg-dim); margin-bottom: 24px; }
+.select-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+.select-card { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 28px 24px; font: inherit; text-align: left; color: var(--fg); background: var(--panel); border: 1px solid var(--line-strong); border-radius: 2px; cursor: pointer; transition: border-color 120ms; }
+.select-card:hover { border-color: var(--fg); }
+.select-en { font-size: 14px; letter-spacing: 0.1em; text-transform: uppercase; }
+.select-ko { font-size: 12px; opacity: 0.75; }
+.select-meta { margin-top: 10px; font-size: 11px; color: var(--fg-dim); letter-spacing: 0.04em; }
