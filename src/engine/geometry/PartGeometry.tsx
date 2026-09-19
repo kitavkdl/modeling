@@ -2,6 +2,7 @@ import { RoundedBox } from '@react-three/drei'
 import type * as THREE from 'three'
 import type { MaterialRegistry } from '../materials'
 import { MM, type Geometry, type Vec3 } from '../types'
+import { curvedGeometry } from './curved'
 import { frustumGeometry } from './frustum'
 
 // 프리미티브와 composite를 그린다. 그룹 원점은 부품 밑면 중심(제품 데이터가 그렇게 정의한다).
@@ -81,6 +82,11 @@ export function PartGeometry({ geometry, material, materials, simple = false }: 
           receiveShadow={cast}
         />
       )
+    case 'lathe':
+    case 'tube':
+    case 'extrude':
+    case 'loft':
+      return <mesh geometry={curvedGeometry(geometry)} material={material} castShadow={cast} receiveShadow={cast} />
     case 'composite':
       return (
         <group>

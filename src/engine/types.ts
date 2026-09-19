@@ -15,6 +15,18 @@ export type Primitive =
   | { type: 'torus'; radius: number; tube: number }
   /** 사다리꼴 기둥. 밑면 [w, d], 윗면 [w, d], 높이 h. 원점은 밑면 중심 */
   | { type: 'frustum'; bottom: [number, number]; top: [number, number]; h: number }
+  /** [반지름, 높이] 점열을 y축 둘레로 회전. 원점은 프로필의 y=0 */
+  | { type: 'lathe'; profile: [number, number][]; segments?: number; angle?: number }
+  /** Catmull-Rom 경로를 따라가는 관. 원점은 경로 좌표계 원점 */
+  | { type: 'tube'; path: Vec3[]; radius: number; segments?: number; radial?: number; closed?: boolean }
+  /** xy 다각형을 z로 밀어낸다. z는 -depth/2..+depth/2 */
+  | { type: 'extrude'; shape: [number, number][]; depth: number; bevel?: number; holes?: [number, number][][] }
+  /** 같은 점 수의 단면들을 차례로 이은 면. closed면 각 단면을 고리로 닫는다 */
+  | { type: 'loft'; sections: Vec3[][]; closed?: boolean; smooth?: boolean }
+
+export type CurvedPrimitive = Extract<Primitive, { type: 'lathe' | 'tube' | 'extrude' | 'loft' }>
+export const isCurved = (g: Geometry): g is CurvedPrimitive =>
+  g.type === 'lathe' || g.type === 'tube' || g.type === 'extrude' || g.type === 'loft'
 
 export interface CompositeChild {
   geometry: Geometry
@@ -193,6 +205,27 @@ export function validateGeometry(g: Geometry, prefix = '', depth = 0): string[] 
       g.top.forEach((v, i) => positive(v, `${prefix}frustum.top[${i}]`, out))
       positive(g.h, `${prefix}frustum.h`, out)
       break
+    case 'lathe':
+      if (g.profile.length < 2) out.push(`${prefix}lathe.profile needs >= 2 points`)
+      g.profile.forEach(([r], i) => { if (r < 0) out.push(`${prefix}lathe.profile[${i}] radius < 0`) })
+      if (!g.profile.some(([r]) => r > 0)) out.push(`${prefix}lathe.profile has no positive radius`)
+      break
+    case 'tube':
+      if (g.path.length < 2) out.push(`${prefix}tube.path needs >= 2 points`)
+      positive(g.radius, `${prefix}tube.radius`, out)
+      break
+    case 'extrude':
+      if (g.shape.length < 3) out.push(`${prefix}extrude.shape needs >= 3 points`)
+      positive(g.depth, `${prefix}extrude.depth`, out)
+      g.holes?.forEach((h, i) => { if (h.length < 3) out.push(`${prefix}extrude.holes[${i}] needs >= 3 points`) })
+      break
+    case 'loft': {
+      if (g.sections.length < 2) out.push(`${prefix}loft needs >= 2 sections`)
+      const n = g.sections[0]?.length ?? 0
+      if (n < 3) out.push(`${prefix}loft sections need >= 3 points`)
+      g.sections.forEach((s, i) => { if (s.length !== n) out.push(`${prefix}loft.sections[${i}] has ${s.length} points, expected ${n}`) })
+      break
+    }
     case 'composite':
       g.children.forEach((c, i) => out.push(...validateGeometry(c.geometry, `${prefix}children[${i}].`, depth + 1)))
       break
