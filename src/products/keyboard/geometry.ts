@@ -40,7 +40,7 @@ export function stabilizer(span: number, housing: Vec3, wireR: number): Geometry
       { geometry: { type: 'box', size: housing }, position: [half, 0, 0] },
       {
         geometry: { type: 'cylinder', radiusTop: wireR, radiusBottom: wireR, height: span + hw, segments: 8 },
-        position: [-(span + hw) / 2, -2.5 - wireR, hd / 2 - 1],
+        position: [-(span + hw) / 2, -2.5, hd / 2 - 1],
         rotation: [0, 0, -Math.PI / 2],
       },
     ],
