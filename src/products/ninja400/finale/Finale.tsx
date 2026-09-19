@@ -2,8 +2,9 @@ import { useEffect } from 'react'
 import { useAssembly, useAssemblyStore } from '../../../engine/context'
 import { requestCameraView } from '../../../engine/scene/controlsRef'
 import * as engineSound from '../audio/engineSound'
+import { RideControls } from './RideControls'
+import { resetRide, ride } from './rideState'
 import { Starter } from './Starter'
-import { resetThrottle } from './throttleState'
 import { Throttle } from './Throttle'
 
 /** 키(정규 부품)를 꽂은 뒤: 시동 버튼 → 스로틀. 카메라도 여기서 옮긴다. */
@@ -12,6 +13,7 @@ export function NinjaFinale() {
     <>
       <Starter />
       <Throttle />
+      <RideControls />
       <EngineEffect />
       <FinaleCamera />
     </>
@@ -19,18 +21,21 @@ export function NinjaFinale() {
 }
 
 /**
- * running 진입/이탈에 엔진 사운드와 진동을 건다 — phase 자체에 매어 두어야
+ * running 진입/이탈에 엔진 사운드와 주행 상태를 건다 — phase 자체에 매어 두어야
  * 건너뛰기(HUD → advancePhase)로 running에 들어와도 시동이 걸린다.
- * (EngineShake는 phase === 'running'을 직접 구독하므로 진동은 따로 손대지 않아도 된다.)
+ * 시동이 꺼지는(stalled) 동안에도 phase는 running 그대로다. 사운드를 끊는 것은
+ * RideControls가, 다시 거는 것은 Starter가 맡는다.
  */
 function EngineEffect() {
   const running = useAssembly((s) => s.phase === 'running')
   useEffect(() => {
     if (!running) return
+    resetRide()
+    ride.running = true
     engineSound.start()
     return () => {
       engineSound.stop()
-      resetThrottle()
+      resetRide()
     }
   }, [running])
   return null

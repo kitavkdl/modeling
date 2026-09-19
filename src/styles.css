@@ -271,3 +271,16 @@ body,
 .select-en { font-size: 14px; letter-spacing: 0.1em; text-transform: uppercase; }
 .select-ko { font-size: 12px; opacity: 0.75; }
 .select-meta { margin-top: 10px; font-size: 11px; color: var(--fg-dim); letter-spacing: 0.04em; }
+
+/* --- Ride gauge ----------------------------------------------------------- */
+.gauge { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 2px; }
+.gauge-gear { font-size: 48px; line-height: 1; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; color: var(--fg); }
+.gauge-bar { position: relative; width: 220px; height: 6px; border: 1px solid var(--line); }
+.gauge-bar > i { display: block; height: 100%; background: var(--fg-dim); transition: width 100ms linear; }
+.gauge-bar.over > i { background: var(--fg); }
+.gauge-redline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line-strong); }
+.gauge-rpm { font-size: 11px; letter-spacing: 0.08em; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.gauge-lamps { display: flex; gap: 10px; font-size: 10px; letter-spacing: 0.12em; color: var(--fg-dim); }
+.gauge-lamps > span.on { color: var(--fg); }
+.gauge-note { font-size: 11px; letter-spacing: 0.02em; color: var(--fg); }
+.gauge-keys { font-size: 10px; letter-spacing: 0.04em; color: var(--fg-dim); }

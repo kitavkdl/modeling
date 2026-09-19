@@ -5,11 +5,11 @@ import { useAssembly, useMaterials } from '../../../engine/context'
 import { clamp01 } from '../../../engine/easing'
 import { cancelCameraTween, setControlsEnabled } from '../../../engine/scene/controlsRef'
 import { MM, type Vec3 } from '../../../engine/types'
-import * as engineSound from '../audio/engineSound'
 import { forkPoint, HEAD } from '../spec'
-import { resetThrottle, throttle } from './throttleState'
+import { ride } from './rideState'
 
-// 우측 그립. 누른 채 화면 위로 끌면 스로틀이 열린다.
+// 우측 그립. 누른 채 화면 위로 끌면 스로틀이 열린다. 값 자체는 rideModel이 굴리고
+// (키보드 ↑와 큰 쪽이 이긴다) 여기서는 ride.throttleMouse만 쓰고 ride.throttle을 보여 준다.
 // clip_on:r 인스턴스는 z=110에 있고 고무 그립은 그 안에서 110~230 구간이므로 월드 중심은 z=280이다.
 
 const [topX, topY] = forkPoint(HEAD[1])
@@ -23,8 +23,6 @@ const GRIP_R = 17
 const DRAG_RANGE_PX = 200
 /** 최대 비틀림 */
 const MAX_TWIST = (60 * Math.PI) / 180
-/** value가 target을 따라가는 시정수 (초) */
-const TAU = 0.25
 
 export function Throttle() {
   const phase = useAssembly((s) => s.phase)
@@ -35,7 +33,7 @@ export function Throttle() {
 
   const release = useCallback(() => {
     startY.current = null
-    throttle.target = 0
+    ride.throttleMouse = 0
     setControlsEnabled(true)
     document.body.style.cursor = ''
   }, [])
@@ -44,7 +42,7 @@ export function Throttle() {
     if (!running) return
     const move = (e: PointerEvent) => {
       if (startY.current === null) return
-      throttle.target = clamp01((startY.current - e.clientY) / DRAG_RANGE_PX)
+      ride.throttleMouse = clamp01((startY.current - e.clientY) / DRAG_RANGE_PX)
     }
     const upHandler = () => {
       if (startY.current !== null) release()
@@ -57,17 +55,15 @@ export function Throttle() {
       window.removeEventListener('pointerup', upHandler)
       window.removeEventListener('pointercancel', upHandler)
       if (startY.current !== null) release()
-      resetThrottle()
+      ride.throttleMouse = 0
     }
   }, [running, release])
 
-  useFrame((_, dt) => {
+  useFrame(() => {
     if (!running) return
-    throttle.value += (throttle.target - throttle.value) * (1 - Math.exp(-dt / TAU))
-    engineSound.setThrottle(throttle.value)
     const g = grip.current
     // +x가 앞이므로 양의 회전이 그립 윗면을 라이더 쪽(뒤)으로 굴린다
-    if (g) g.rotation.z = throttle.value * MAX_TWIST
+    if (g) g.rotation.z = ride.throttle * MAX_TWIST
   })
 
   const onPointerDown = useCallback((e: ThreeEvent<PointerEvent>) => {
