@@ -51,3 +51,12 @@ describe('curved primitives', () => {
     expect(validateGeometry({ type: 'loft', sections: [[[0, 0, 0], [1, 0, 0], [0, 0, 1]], [[0, 1, 0], [1, 1, 0], [0, 1, 1]]] })).toEqual([])
   })
 })
+
+describe('extrude bevel guard', () => {
+  it('bevel*2 >= depth는 validateGeometry가 거부하고, 빌더는 잘라서 z 범위를 대칭으로 유지한다', () => {
+    expect(validateGeometry({ type: 'extrude', shape: [[-50, -25], [50, -25], [50, 25], [-50, 25]], depth: 10, bevel: 5 })).not.toEqual([])
+    const g = curvedGeometry({ type: 'extrude', shape: [[-50, -25], [50, -25], [50, 25], [-50, 25]], depth: 10, bevel: 8 })
+    const b = bbox(g)
+    expect(Math.abs(b.min[2] + b.max[2])).toBeLessThan(0.05)
+  })
+})

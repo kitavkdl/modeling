@@ -219,6 +219,7 @@ export function validateGeometry(g: Geometry, prefix = '', depth = 0): string[] 
     case 'extrude':
       if (g.shape.length < 3) out.push(`${prefix}extrude.shape needs >= 3 points`)
       positive(g.depth, `${prefix}extrude.depth`, out)
+      if (g.bevel !== undefined && g.bevel * 2 >= g.depth) out.push(`${prefix}extrude.bevel*2 must be < depth`)
       g.holes?.forEach((h, i) => { if (h.length < 3) out.push(`${prefix}extrude.holes[${i}] needs >= 3 points`) })
       break
     case 'loft': {

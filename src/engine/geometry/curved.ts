@@ -28,7 +28,8 @@ function build(g: CurvedPrimitive): THREE.BufferGeometry {
       const shape = new THREE.Shape(g.shape.map(([x, y]) => new THREE.Vector2(x * MM, y * MM)))
       for (const h of g.holes ?? []) shape.holes.push(new THREE.Path(h.map(([x, y]) => new THREE.Vector2(x * MM, y * MM))))
       const depth = g.depth * MM
-      const bevel = (g.bevel ?? 0) * MM
+      // bevel이 depth의 절반을 넘으면 z 범위가 비대칭이 된다. validateGeometry가 막지만 여기서도 잘라 둔다
+      const bevel = Math.min((g.bevel ?? 0) * MM, depth * 0.49)
       const geo = new THREE.ExtrudeGeometry(shape, {
         depth: Math.max(0.001, depth - bevel * 2),
         bevelEnabled: bevel > 0,
