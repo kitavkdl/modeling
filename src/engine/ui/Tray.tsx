@@ -1,19 +1,30 @@
-import { PARTS } from '../products/keyboard/parts'
-import { isPartAvailable, isPartComplete, mountedCount, useAssembly } from '../store/assembly'
+import { useAssembly, useProduct } from '../context'
+import { isPartAvailable, isPartComplete, mountedCount } from '../store'
 
 /** 화면 하단 부품 트레이. 장착 가능한 부품만 활성. */
 export function Tray() {
+  const product = useProduct()
+  const parts = product.parts
   const mounted = useAssembly((s) => s.mounted)
   const selectedPartId = useAssembly((s) => s.selectedPartId)
   const selectPart = useAssembly((s) => s.selectPart)
   const phase = useAssembly((s) => s.phase)
   const locked = phase !== 'assembly'
 
+  const cols = parts.length <= 10 ? parts.length : 10
+
   return (
-    <div className="tray">
-      {PARTS.map((p, i) => {
+    <div
+      className="tray"
+      style={
+        parts.length <= 10
+          ? { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }
+          : { gridAutoFlow: 'column', gridAutoColumns: 'minmax(120px, 1fr)', overflowX: 'auto' }
+      }
+    >
+      {parts.map((p, i) => {
         const done = isPartComplete(mounted, p)
-        const available = !locked && isPartAvailable(mounted, p)
+        const available = !locked && isPartAvailable(product, mounted, p)
         const selected = selectedPartId === p.id
         const n = mountedCount(mounted, p)
         const cls = ['tray-item', done && 'is-done', available && 'is-available', selected && 'is-selected']

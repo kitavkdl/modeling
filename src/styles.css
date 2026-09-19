@@ -161,6 +161,7 @@ body,
   display: grid;
   grid-template-columns: repeat(10, minmax(0, 1fr));
   gap: 6px;
+  overflow-x: auto;
 }
 
 .tray-item {
@@ -244,3 +245,10 @@ body,
   background: currentColor;
   transition: width 60ms linear;
 }
+
+/* --- Variants ------------------------------------------------------------- */
+.variants { display: flex; gap: 8px; pointer-events: auto; }
+.variant { display: flex; align-items: center; gap: 8px; font: inherit; font-size: 11px; letter-spacing: 0.06em; color: var(--fg); background: transparent; border: 1px solid var(--line-strong); border-radius: 2px; padding: 6px 10px 6px 6px; cursor: pointer; }
+.variant:hover { border-color: var(--fg); }
+.variant-swatch { width: 18px; height: 18px; border-radius: 2px; border: 1px solid rgba(255,255,255,0.15); }
+.hud-back { margin-top: 10px; padding-left: 0; }
