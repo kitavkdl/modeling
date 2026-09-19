@@ -5,7 +5,7 @@ import { ninja400Product } from './index'
 describe('ninja400Product', () => {
   it('declares phases, hints and drag config', () => {
     expect(ninja400Product.phasesAfterComplete).toEqual(['keyed', 'running'])
-    expect(ninja400Product.hints.complete).toBe('키 삽입')
+    expect(ninja400Product.hints.keyed).toBe('시동')
     expect(ninja400Product.hints.running).toBe('스로틀 개방')
     expect(ninja400Product.drag).toEqual({ snapMm: 150, paintMm: 25, grabMinMm: 200 })
   })

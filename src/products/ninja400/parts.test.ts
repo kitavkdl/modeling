@@ -103,14 +103,23 @@ describe('ninja400 parts', () => {
     expect(PART_BY_ID.turn_signal.count).toBe(4)
     expect(PART_BY_ID.radiator.requires).toEqual(['chain'])
   })
-  it('bodywork is paintable primer and paint is the last, hidden, variant part', () => {
-    const last = PARTS[PARTS.length - 1]
-    expect(last.id).toBe('paint')
-    expect(last.hidden).toBe(true)
-    expect(last.variants?.map((v) => v.id)).toEqual(['krt', 'blue', 'black'])
+  it('bodywork is paintable primer and paint is a hidden variant part right before the ignition key', () => {
+    const paintIdx = PARTS.findIndex((p) => p.id === 'paint')
+    const paint = PARTS[paintIdx]
+    expect(paint.hidden).toBe(true)
+    expect(paint.variants?.map((v) => v.id)).toEqual(['krt', 'blue', 'black'])
+    expect(PARTS[paintIdx + 1]?.id).toBe('ignition_key')
     const paintable = PARTS.filter((p) => p.paintable).map((p) => p.id)
     expect(paintable).toEqual(['front_fender', 'fuel_tank', 'upper_cowl', 'side_cowl', 'lower_cowl', 'tail_cowl'])
-    expect(PARTS).toHaveLength(80)
+    expect(PARTS).toHaveLength(81)
+  })
+  it('the ignition key is the last part and its mount advances the phase to keyed', () => {
+    const last = PARTS[PARTS.length - 1]
+    expect(last.id).toBe('ignition_key')
+    expect(last.phaseOnMount).toBe('keyed')
+    expect(last.requires).toContain('paint')
+    expect(last.hidden).toBeFalsy()
+    expect(last.variants).toBeUndefined()
   })
   it('대기 위치가 바닥 위에 있고 지그 기둥 윗면이 프레임 노드에 닿는다', () => {
     for (const p of PARTS) {

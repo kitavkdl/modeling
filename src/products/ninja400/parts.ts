@@ -3,7 +3,7 @@
 // 부품을 추가할 때는 아래 구분 주석 자리에 add({...})를 순서대로 끼워 넣는다.
 
 import type { CameraView, Geometry, PartDef, PartInstance, ProductDef, StationDef, Vec3 } from '../../engine/types'
-import { cowl, cylZ, disc, forkLeg, sprocket, tank, trellis, wheel } from './geometry'
+import { cowl, cylZ, disc, forkLeg, keyGeometry, sprocket, tank, trellis, wheel } from './geometry'
 import { PAINT_VARIANTS } from './materials'
 import {
   CRANK,
@@ -114,6 +114,8 @@ interface PartInput {
   preplaced?: boolean
   /** 작은 부품이면 대기 위치를 카메라 쪽으로 */
   small?: boolean
+  /** 이 부품이 다 장착되면 넘어갈 phase (마지막 부품에만 의미 있음) */
+  phaseOnMount?: string
 }
 
 const defs: PartInput[] = []
@@ -279,7 +281,12 @@ add({ id: 'radiator_hose', ko: '라디에이터 호스', en: 'Radiator Hose', ge
 add({ id: 'coolant_reservoir', ko: '리저브 탱크', en: 'Coolant Reservoir', geometry: { type: 'box', size: [90, 140, 60] }, mount: [-200, 260, 190], material: 'plastic_black', small: true })
 add({ id: 'battery', ko: '배터리', en: 'Battery', geometry: { type: 'box', size: [140, 100, 90] }, mount: [-560, 620, 0], material: 'plastic_black', small: true, camera: { azimuth: -30, polar: 55, distance: 2600, target: [-500, 700, 0] } })
 add({ id: 'ecu', ko: 'ECU', en: 'ECU', geometry: { type: 'box', size: [120, 30, 100] }, mount: [-650, 720, 0], material: 'plastic_black', small: true })
-add({ id: 'instrument_cluster', ko: '계기판', en: 'Instrument Cluster', geometry: { type: 'box', size: [40, 90, 200] }, mount: [520, 1000, 0], rot: [0, 0, -0.5], material: 'plastic_black', small: true, camera: { azimuth: 10, polar: 50, distance: 2200, target: [500, 950, 0] } })
+add({ id: 'instrument_cluster', ko: '계기판', en: 'Instrument Cluster', geometry: { type: 'composite', children: [
+  { geometry: { type: 'box', size: [40, 90, 200] } },
+  // 키 실린더: 계기판이 rot [0,0,-0.5]로 서 있어, 키 부품의 월드 마운트(540, 980, 60)에 겹치도록
+  // 역회전한 로컬 좌표에 둔다.
+  { geometry: { type: 'cylinder', radiusTop: 12, radiusBottom: 12, height: 20, segments: 16 }, position: [27, -8, 60] } ] },
+  mount: [520, 1000, 0], rot: [0, 0, -0.5], material: 'plastic_black', small: true, camera: { azimuth: 10, polar: 50, distance: 2200, target: [500, 950, 0] } })
 add({ id: 'headlight', ko: '헤드라이트 유닛', en: 'Headlight Unit', geometry: { type: 'composite', children: [{ geometry: { type: 'box', size: [60, 120, 110] }, position: [0, 0, -95] }, { geometry: { type: 'box', size: [60, 120, 110] }, position: [0, 0, 95] }] }, mount: [720, 900, 0], rot: [0, 0, 0.2], material: 'lamp_off', small: true, camera: { azimuth: 0, polar: 60, distance: 2400, target: [700, 850, 0] } })
 add({ id: 'taillight', ko: '테일라이트', en: 'Tail Light', geometry: { type: 'box', size: [40, 60, 160] }, mount: [-900, 780, 0], material: 'lamp_off', small: true, camera: { azimuth: 180, polar: 60, distance: 2400, target: [-800, 750, 0] } })
 add({ id: 'turn_signal', ko: '방향지시등', en: 'Turn Signal', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 6, radiusBottom: 6, height: 60, segments: 8 }, rotation: [Math.PI / 2, 0, 0] }, { geometry: { type: 'box', size: [50, 30, 30] }, position: [0, 0, 70] }] }, mount: [0, 0, 0], material: 'lamp_off', small: true,
@@ -317,6 +324,10 @@ add({ id: 'passenger_seat', ko: '동승자 시트', en: 'Passenger Seat', geomet
 add({ id: 'mirror', ko: '미러', en: 'Mirror', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 7, radiusBottom: 7, height: 140, segments: 8 }, rotation: [0.6, 0, 0] }, { geometry: { type: 'box', size: [30, 80, 130] }, position: [0, 120, 80] }] }, mount: [0, 0, 0], material: 'plastic_black', small: true,
   instances: [{ suffix: 'l', mount: [600, 1000, -200], rot: [0, Math.PI, 0] }, { suffix: 'r', mount: [600, 1000, 200] }] })
 add({ id: 'paint', ko: '도색', en: 'Paint', geometry: { type: 'box', size: [10, 10, 10] }, mount: [0, 0, 0], material: 'primer', hidden: true, variants: PAINT_VARIANTS, hint: '도색', camera: { azimuth: 30, polar: 62, distance: 4000, target: [0, 600, 0] } })
+// 도색까지 끝나면 마지막으로 키를 꽂는다 — 정규 부품 81번째. 다 장착되면 phase가 assembly에서 바로 keyed로 넘어간다.
+add({ id: 'ignition_key', ko: '키', en: 'Ignition Key', geometry: keyGeometry(), mount: [540, 980, 60], rot: [0, 0, 0], material: 'steel',
+  requires: ['paint'], small: true, hint: '키 삽입', phaseOnMount: 'keyed',
+  camera: { azimuth: 20, polar: 55, distance: 900, target: [520, 950, 40] } })
 
 // 빌드 ---------------------------------------------------------------------
 function build(): PartDef[] {
@@ -357,6 +368,7 @@ function build(): PartDef[] {
       hidden: d.hidden,
       cameraView,
       hint: d.hint ?? `${d.ko} 장착`,
+      phaseOnMount: d.phaseOnMount,
     }
   })
 }

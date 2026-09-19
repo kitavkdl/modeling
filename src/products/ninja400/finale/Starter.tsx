@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import type { ThreeEvent } from '@react-three/fiber'
 import { useAssembly, useAssemblyStore, useMaterials } from '../../../engine/context'
 import { MM, type Vec3 } from '../../../engine/types'
-import * as engineSound from '../audio/engineSound'
 import { forkPoint, HEAD } from '../spec'
-import { resetThrottle } from './throttleState'
 
 // 우측 클립온의 스위치 하우징. keyed에서 빨간 버튼을 누르면 시동이 걸린다.
 // running에서도 그대로 보이되 버튼은 눌린 자리에 있고 더는 반응하지 않는다.
+// 엔진 사운드 시작/정지는 Finale의 phase 효과에서 처리한다 — 건너뛰기(HUD → advancePhase)로
+// running에 들어와도 시동이 걸리게 하려면 클릭 이벤트가 아니라 phase 자체에 매야 한다.
 
 const [topX, topY] = forkPoint(HEAD[1])
 /** 스위치 하우징 중심 (mm) */
@@ -20,21 +20,6 @@ export function Starter() {
   const phase = useAssembly((s) => s.phase)
   const [hover, setHover] = useState(false)
 
-  // running에서 벗어나거나(되돌리기·리셋) 언마운트되면 엔진을 끈다
-  useEffect(() => {
-    const unsub = store.subscribe((s, prev) => {
-      if (prev.phase === 'running' && s.phase !== 'running') {
-        engineSound.stop()
-        resetThrottle()
-      }
-    })
-    return () => {
-      unsub()
-      engineSound.stop()
-      resetThrottle()
-    }
-  }, [store])
-
   const onPointerDown = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
       if (store.getState().phase !== 'keyed') return
@@ -42,7 +27,6 @@ export function Starter() {
       setHover(false)
       document.body.style.cursor = ''
       store.getState().advancePhase()
-      engineSound.start()
     },
     [store],
   )

@@ -36,6 +36,6 @@ export const ninja400Product: ProductDef = {
     if (ctx.part.station === 'engine') return <EngineShake {...ctx} />
     return null
   },
-  hints: { complete: '키 삽입', keyed: '시동', running: '스로틀 개방' },
+  hints: { keyed: '시동', running: '스로틀 개방' },
   phasesAfterComplete: ['keyed', 'running'],
 }

@@ -126,3 +126,33 @@ export function tank(): Geometry {
   ]
   return { type: 'composite', children }
 }
+
+/** 모서리가 둥근 사각형 윤곽. extrude.shape로 쓴다 — 중심이 원점, w×h 크기, 모서리 반지름 r */
+function roundedRect(w: number, h: number, r: number, seg = 4): [number, number][] {
+  const hw = w / 2
+  const hh = h / 2
+  const corners: Array<[number, number, number]> = [
+    [hw - r, hh - r, 0],
+    [-(hw - r), hh - r, Math.PI / 2],
+    [-(hw - r), -(hh - r), Math.PI],
+    [hw - r, -(hh - r), Math.PI * 1.5],
+  ]
+  const pts: [number, number][] = []
+  for (const [cx, cy, start] of corners) {
+    for (let i = 0; i <= seg; i++) {
+      const a = start + (i / seg) * (Math.PI / 2)
+      pts.push([cx + r * Math.cos(a), cy + r * Math.sin(a)])
+    }
+  }
+  return pts
+}
+
+/** 점화 키. 원점은 날 끝(꽂히는 쪽). 날은 사각 기둥으로 원점에서 +y 32mm 뻗고,
+ *  손잡이(둥근 사각 압출)는 날 위 y=32에 얹혀 날이 손잡이에서 −y로 뻗는 모양이 된다. */
+export function keyGeometry(): Geometry {
+  const children: CompositeChild[] = [
+    { geometry: { type: 'box', size: [4, 32, 8] } },
+    { geometry: { type: 'extrude', shape: roundedRect(40, 28, 6), depth: 6, bevel: 2 }, position: [0, 32, 0], material: 'plastic_black' },
+  ]
+  return { type: 'composite', children }
+}
