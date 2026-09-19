@@ -27,7 +27,7 @@ export const ninja400Product: ProductDef = {
     minPolarDeg: 20,
     maxPolarDeg: 85,
   },
-  drag: { snapMm: 150, paintMm: 60, hoverMm: 150, grabMinMm: 200 },
+  drag: { snapMm: 150, paintMm: 25, hoverMm: 150, grabMinMm: 200 },
   environment: { contactShadowSizeMm: [4200, 3200], shadowBoundsMm: 2400 },
   Finale: NinjaFinale,
   renderInstance: (ctx) => {
@@ -36,6 +36,6 @@ export const ninja400Product: ProductDef = {
     if (ctx.part.station === 'engine') return <EngineShake {...ctx} />
     return null
   },
-  hints: { complete: '키 삽입', keyed: '시동', running: '스로틀' },
+  hints: { complete: '키 삽입', keyed: '시동', running: '스로틀 개방' },
   phasesAfterComplete: ['keyed', 'running'],
 }

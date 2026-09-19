@@ -52,6 +52,20 @@ let timer: ReturnType<typeof setInterval> | null = null
 /** 여기까지 예약이 끝났다 (AudioContext 시계) */
 let cursor = 0
 let level = 0
+/** stop() 페이드가 끝난 뒤 ctx.suspend()를 걸어 둔 타이머 */
+let suspendTimer: ReturnType<typeof setTimeout> | null = null
+
+/** 탭이 백그라운드로 가면 재생을 멈추고, 돌아오면 밀린 예약을 버리고 현재 시각부터 다시 스케줄한다 */
+function handleVisibilityChange() {
+  if (!ctx) return
+  if (document.hidden) {
+    if (timer !== null) void ctx.suspend()
+  } else if (ctx.state === 'suspended') {
+    void ctx.resume().then(() => {
+      if (ctx) cursor = ctx.currentTime
+    })
+  }
+}
 
 function ensureContext(): AudioContext | null {
   if (typeof window === 'undefined') return null
@@ -62,10 +76,13 @@ function ensureContext(): AudioContext | null {
     master = ctx.createGain()
     master.gain.value = MASTER_GAIN
 
+    const compressor = ctx.createDynamicsCompressor()
+    compressor.connect(ctx.destination)
+
     const dry = ctx.createGain()
     dry.gain.value = 1
     master.connect(dry)
-    dry.connect(ctx.destination)
+    dry.connect(compressor)
     for (const tap of DELAY_TAPS) {
       const delay = ctx.createDelay(0.1)
       delay.delayTime.value = tap.timeMs / 1000
@@ -73,13 +90,15 @@ function ensureContext(): AudioContext | null {
       g.gain.value = tap.gain
       master.connect(delay)
       delay.connect(g)
-      g.connect(ctx.destination)
+      g.connect(compressor)
     }
 
     const len = Math.ceil(ctx.sampleRate * 0.1)
     noiseBuffer = ctx.createBuffer(1, len, ctx.sampleRate)
     const data = noiseBuffer.getChannelData(0)
     for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1
+
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', handleVisibilityChange)
   }
   if (ctx.state === 'suspended') void ctx.resume()
   return ctx
@@ -137,6 +156,11 @@ function tick() {
 export function start(): void {
   const ac = ensureContext()
   if (!ac || !master) return
+  if (suspendTimer !== null) {
+    clearTimeout(suspendTimer)
+    suspendTimer = null
+  }
+  if (ac.state === 'suspended') void ac.resume()
   master.gain.cancelScheduledValues(ac.currentTime)
   master.gain.setValueAtTime(MASTER_GAIN, ac.currentTime)
   if (timer !== null) return
@@ -164,4 +188,9 @@ export function stop(): void {
   master.gain.cancelScheduledValues(now)
   master.gain.setValueAtTime(master.gain.value, now)
   master.gain.linearRampToValueAtTime(0.0001, now + STOP_FADE_S)
+  if (suspendTimer !== null) clearTimeout(suspendTimer)
+  suspendTimer = setTimeout(() => {
+    suspendTimer = null
+    void ac.suspend()
+  }, (STOP_FADE_S + 0.05) * 1000)
 }
