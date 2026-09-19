@@ -54,13 +54,3 @@ export const ghostHoverMaterial = new THREE.MeshBasicMaterial({
   depthWrite: false,
   depthTest: false,
 })
-
-/** 스냅 반경을 바닥에 눕힌 링으로 보여 주는 재질 */
-export const snapRingMaterial = new THREE.MeshBasicMaterial({
-  color: '#ffffff',
-  transparent: true,
-  opacity: 0.35,
-  depthWrite: false,
-  depthTest: false,
-  side: THREE.DoubleSide,
-})

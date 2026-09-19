@@ -37,6 +37,7 @@ const toUnits = (mm: Vec3) => new THREE.Vector3(mm[0] * MM, mm[1] * MM, mm[2] * 
 export function CameraRig() {
   const controls = useRef<OrbitControlsImpl>(null)
   const camera = useThree((s) => s.camera)
+  if (import.meta.env.DEV) (window as unknown as { __camera?: unknown }).__camera = camera
   const tween = useRef<Tween | null>(null)
   const product = useProduct()
   const cfg = product.camera

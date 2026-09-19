@@ -19,11 +19,14 @@ const RETURN_MS = 300
 const up = new THREE.Vector3(0, 1, 0)
 
 interface DragState {
+  /** 잡은 지점이 미끄러지는 수평면. 부품 밑면이 장착 높이에 올 때 잡은 지점이 놓이는 높이다 */
   plane: THREE.Plane
-  /** 커서 교점 → 부품 위치 오프셋 (units) */
+  /** 커서 교점 → 부품 밑면 위치 오프셋 (units, 수평) */
   offset: THREE.Vector3
-  /** 커서가 가리키는 부품 목표 위치 (units). 판정은 이 값으로, 렌더는 이 값을 따라간다. */
+  /** 커서가 가리키는 부품 목표 위치 (units). 밑면 높이는 장착 높이. 판정은 이 값으로 한다 */
   target: THREE.Vector3
+  /** 지금 커서 광선의 방향. 렌더는 target에서 이 방향의 반대로 hover만큼 띄운다 */
+  rayDir: THREE.Vector3
 }
 
 interface ReturnState {
@@ -70,8 +73,10 @@ function Draggable({ part }: { part: PartDef }) {
     if (!part.station || seated) return [0, 0, 0]
     return product.stations.find((s) => s.id === part.station)?.offset ?? [0, 0, 0]
   }, [product, part, seated])
-  /** 잡았을 때 떠 있는 높이 (units) */
-  const hoverY = (part.mountPosition[1] + oy + cfg.hoverMm) * MM
+  /** 장착됐을 때 부품 밑면의 높이 (units). 드래그 판정면이 여기 있다 */
+  const baseY = (part.mountPosition[1] + oy) * MM
+  /** 잡고 있는 동안 카메라 쪽으로 띄우는 거리 (units) */
+  const lift = cfg.hoverMm * MM
 
   const endDrag = useCallback(() => {
     const s = store.getState()
@@ -102,7 +107,8 @@ function Draggable({ part }: { part: PartDef }) {
       ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1)
       raycaster.setFromCamera(ndc, camera)
       if (raycaster.ray.intersectPlane(d.plane, tmp)) {
-        d.target.set(tmp.x + d.offset.x, hoverY, tmp.z + d.offset.z)
+        d.target.set(tmp.x + d.offset.x, baseY, tmp.z + d.offset.z)
+        d.rayDir.copy(raycaster.ray.direction)
         resolveTargets(store, part, d.target, cfg, [ox, oy, oz])
       }
     }
@@ -126,7 +132,7 @@ function Draggable({ part }: { part: PartDef }) {
         document.body.style.cursor = ''
       }
     }
-  }, [camera, gl, endDrag, ndc, raycaster, tmp, part, store, cfg, ox, oy, oz, hoverY])
+  }, [camera, gl, endDrag, ndc, raycaster, tmp, part, store, cfg, ox, oy, oz, baseY])
 
   const onPointerDown = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
@@ -137,21 +143,23 @@ function Draggable({ part }: { part: PartDef }) {
       setControlsEnabled(false)
       cancelCameraTween()
       returning.current = null
-      const plane = new THREE.Plane(up, -hoverY)
-      // 오프셋은 부품 표면의 실제 클릭 지점(e.point) 기준으로 잡는다. 이후 커서 광선과 hoverY 평면의
-      // 교점에 이 오프셋을 더하면 잡은 지점이 항상 커서 광선 위에 놓여, 들어 올려도 커서 아래에 머문다.
-      // (hoverY 평면 교점으로 오프셋을 잡으면 들어 올린 높이만큼의 시차가 화면에 그대로 남는다.)
+      // 잡은 지점(e.point)이 부품 밑면보다 얼마나 위인지(dy)를 재고, 부품 밑면이 장착 높이에 올 때
+      // 잡은 지점이 놓일 높이에 수평 판정면을 둔다. 커서 광선과 이 면의 교점에 수평 오프셋을 더하면
+      // 잡은 지점은 늘 커서 아래에 있고, 부품을 고스트 위에 겹쳐 보이게 놓으면 그대로 판정도 맞는다.
+      // (판정면을 장착 높이보다 띄우면 띄운 만큼 화면상 시차가 생겨, 고스트보다 위에 들고 있어야 장착됐다.)
+      const dy = e.point.y - g.position.y
+      const plane = new THREE.Plane(up, -(baseY + dy))
       const offset = new THREE.Vector3(g.position.x - e.point.x, 0, g.position.z - e.point.z)
       raycaster.setFromCamera(e.pointer, camera)
       const hit = new THREE.Vector3()
       const target = raycaster.ray.intersectPlane(plane, hit)
-        ? new THREE.Vector3(hit.x + offset.x, hoverY, hit.z + offset.z)
-        : new THREE.Vector3(g.position.x, hoverY, g.position.z)
-      drag.current = { plane, offset, target }
+        ? new THREE.Vector3(hit.x + offset.x, baseY, hit.z + offset.z)
+        : new THREE.Vector3(g.position.x, baseY, g.position.z)
+      drag.current = { plane, offset, target, rayDir: raycaster.ray.direction.clone() }
       store.getState().setDragging(true)
       document.body.style.cursor = 'grabbing'
     },
-    [camera, hoverY, raycaster, store],
+    [camera, baseY, raycaster, store],
   )
 
   useFrame(() => {
@@ -159,7 +167,9 @@ function Draggable({ part }: { part: PartDef }) {
     if (!g) return
     const d = drag.current
     if (d) {
-      g.position.lerp(d.target, 0.4)
+      // 띄우기는 위가 아니라 카메라 쪽으로 한다. 화면 위치는 그대로라 고스트와 겹쳐 보이면 실제로도 겹친다.
+      tmp.copy(d.target).addScaledVector(d.rayDir, -lift)
+      g.position.lerp(tmp, 0.4)
       return
     }
     const r = returning.current
