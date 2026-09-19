@@ -84,6 +84,22 @@ describe('ninja400 parts', () => {
     expect(paintable).toEqual(['front_fender', 'fuel_tank', 'upper_cowl', 'side_cowl', 'lower_cowl', 'tail_cowl'])
     expect(PARTS).toHaveLength(80)
   })
+  it('대기 위치가 바닥 위에 있고 지그 기둥 윗면이 프레임 노드에 닿는다', () => {
+    for (const p of PARTS) {
+      // 어떤 부품도 바닥 아래에서 대기하지 않는다
+      expect(p.restPosition[1], `${p.id} rest y`).toBeGreaterThanOrEqual(0)
+      // 작업대가 없는 부품은 지면에 파묻히지 않도록 띄워 둔다
+      if (!p.station && !p.preplaced && !p.hidden) {
+        expect(p.restPosition[1], `${p.id} rest y`).toBeGreaterThanOrEqual(100)
+      }
+    }
+    // 앞 지그는 엔진 앞 하단 마운트(y=300), 뒤 지그는 스윙암 피벗(y=420)에 닿는다
+    const tops = PROPS.map((pr) => {
+      expect(pr.geometry.type).toBe('box')
+      return pr.geometry.type === 'box' ? pr.position[1] + pr.geometry.size[1] : Number.NaN
+    })
+    expect(tops).toEqual([300, 420])
+  })
   it('paintRank orders paintable instances front to back', async () => {
     const { paintRank } = await import('./parts')
     expect(paintRank('front_fender')).toBe(0)

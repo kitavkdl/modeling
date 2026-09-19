@@ -121,8 +121,8 @@ export function cowl(size: Vec3, taper: number): Geometry {
 /** 연료탱크: 2단 frustum. 밑면 기준 */
 export function tank(): Geometry {
   const children: CompositeChild[] = [
-    { geometry: { type: 'frustum', bottom: [420, 300], top: [380, 260], h: 90 } },
-    { geometry: { type: 'frustum', bottom: [380, 260], top: [220, 150], h: 110 }, position: [0, 90, 0] },
+    { geometry: { type: 'frustum', bottom: [380, 280], top: [340, 240], h: 90 } },
+    { geometry: { type: 'frustum', bottom: [340, 240], top: [220, 150], h: 110 }, position: [0, 90, 0] },
   ]
   return { type: 'composite', children }
 }

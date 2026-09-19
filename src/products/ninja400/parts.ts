@@ -59,19 +59,22 @@ export const STATIONS: StationDef[] = [
   },
 ]
 
-/** 프레임 지그: 프레임 아래 받침 2개 */
+/** 프레임 지그: 프레임 최하단 노드 두 곳을 받치는 기둥 2개.
+ *  앞 기둥은 엔진 앞 하단 마운트(200, 300, ±130), 뒤 기둥은 스윙암 피벗(-420, 420, ±150) 아래다.
+ *  기둥 윗면 = position.y + size.y 가 그 노드 높이와 정확히 같다. */
 export const PROPS: NonNullable<ProductDef['props']> = [
-  { geometry: { type: 'box', size: [80, 300, 240] }, position: [250, 0, 0], material: 'bench' },
-  { geometry: { type: 'box', size: [80, 300, 240] }, position: [-350, 0, 0], material: 'bench' },
+  { geometry: { type: 'box', size: [80, 300, 300] }, position: [200, 0, 0], material: 'bench' },
+  { geometry: { type: 'box', size: [80, 420, 340] }, position: [-420, 0, 0], material: 'bench' },
 ]
 
 // 대기 위치 · 카메라 기본값 -------------------------------------------------------
+// 대기 높이는 지면 위다. 부품 원점이 형상 한가운데인 경우가 많아 y=0이면 바닥에 파묻힌다.
 const REST: Record<string, Vec3> = {
-  main: [-300, 0, -1000], // 차체 뒤쪽 (큰 부품)
-  small: [0, 0, 1500], // 카메라 쪽 (볼트·밸브·지시등)
+  main: [-300, 200, -1000], // 차체 뒤쪽 (큰 부품)
+  small: [0, 200, 1500], // 카메라 쪽 (볼트·밸브·지시등)
   engine: [420, 300, 1100], // 엔진 스탠드 옆
-  front_wheel: [1585, 20, 1000],
-  rear_wheel: [-1585, 20, 1000],
+  front_wheel: [1585, 320, 1000], // 휠 원점이 액슬 중심이라 타이어 반지름(293)보다 높다
+  rear_wheel: [-1585, 320, 1000], // 뒤 타이어 반지름은 306
 }
 const VIEW: Record<string, CameraView> = {
   main: { azimuth: 30, polar: 64, distance: 4200, target: [0, 500, 0] },
@@ -154,7 +157,7 @@ add({
   mount: FRAME_BASE,
   material: 'frame_paint',
   preplaced: true,
-  hint: '프레임',
+  hint: '프레임 확인',
 })
 
 /** 서브프레임 원점 = 메인 프레임과 만나는 앞쪽 마운트 중앙 */
@@ -274,7 +277,7 @@ add({ id: 'coolant_reservoir', ko: '리저브 탱크', en: 'Coolant Reservoir', 
 add({ id: 'battery', ko: '배터리', en: 'Battery', geometry: { type: 'box', size: [140, 100, 90] }, mount: [-560, 620, 0], material: 'plastic_black', small: true, camera: { azimuth: -30, polar: 55, distance: 2600, target: [-500, 700, 0] } })
 add({ id: 'ecu', ko: 'ECU', en: 'ECU', geometry: { type: 'box', size: [120, 30, 100] }, mount: [-650, 720, 0], material: 'plastic_black', small: true })
 add({ id: 'instrument_cluster', ko: '계기판', en: 'Instrument Cluster', geometry: { type: 'box', size: [40, 90, 200] }, mount: [520, 1000, 0], rot: [0, 0, -0.5], material: 'plastic_black', small: true, camera: { azimuth: 10, polar: 50, distance: 2200, target: [500, 950, 0] } })
-add({ id: 'headlight', ko: '헤드라이트 유닛', en: 'Headlight Unit', geometry: { type: 'composite', children: [{ geometry: { type: 'box', size: [60, 120, 110] }, position: [0, 0, -95] }, { geometry: { type: 'box', size: [60, 120, 110] }, position: [0, 0, 95] }] }, mount: [780, 900, 0], rot: [0, 0, 0.2], material: 'lamp_off', small: true, camera: { azimuth: 0, polar: 60, distance: 2400, target: [700, 850, 0] } })
+add({ id: 'headlight', ko: '헤드라이트 유닛', en: 'Headlight Unit', geometry: { type: 'composite', children: [{ geometry: { type: 'box', size: [60, 120, 110] }, position: [0, 0, -95] }, { geometry: { type: 'box', size: [60, 120, 110] }, position: [0, 0, 95] }] }, mount: [720, 900, 0], rot: [0, 0, 0.2], material: 'lamp_off', small: true, camera: { azimuth: 0, polar: 60, distance: 2400, target: [700, 850, 0] } })
 add({ id: 'taillight', ko: '테일라이트', en: 'Tail Light', geometry: { type: 'box', size: [40, 60, 160] }, mount: [-900, 780, 0], material: 'lamp_off', small: true, camera: { azimuth: 180, polar: 60, distance: 2400, target: [-800, 750, 0] } })
 add({ id: 'turn_signal', ko: '방향지시등', en: 'Turn Signal', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 6, radiusBottom: 6, height: 60, segments: 8 }, rotation: [Math.PI / 2, 0, 0] }, { geometry: { type: 'box', size: [50, 30, 30] }, position: [0, 0, 70] }] }, mount: [0, 0, 0], material: 'lamp_off', small: true,
   instances: [{ suffix: 'fl', mount: [700, 820, -150], rot: [0, Math.PI, 0] }, { suffix: 'fr', mount: [700, 820, 150] }, { suffix: 'rl', mount: [-880, 700, -110], rot: [0, Math.PI, 0] }, { suffix: 'rr', mount: [-880, 700, 110] }] })
@@ -300,9 +303,9 @@ add({ id: 'lever', ko: '브레이크 · 클러치 레버', en: 'Brake / Clutch L
 // --- L~M. 외장·도색 (Task B6) --------------------------------------------------
 add({ id: 'upper_cowl', ko: '어퍼 카울', en: 'Upper Cowl', geometry: cowl([260, 260, 520], 0.7), mount: [640, 760, 0], rot: [0, 0, 0.25], material: 'primer', paintable: true, requires: ['lever'], camera: { azimuth: 25, polar: 60, distance: 3200, target: [600, 850, 0] } })
 add({ id: 'side_cowl', ko: '사이드 카울', en: 'Side Cowl', geometry: { type: 'box', size: [620, 380, 30] }, mount: [0, 0, 0], material: 'primer', paintable: true,
-  instances: [{ suffix: 'l', mount: [120, 500, -265], rot: [0, 0, 0.15] }, { suffix: 'r', mount: [120, 500, 265], rot: [0, 0, 0.15] }] })
+  instances: [{ suffix: 'l', mount: [40, 560, -265], rot: [0, 0, 0.15] }, { suffix: 'r', mount: [40, 560, 265], rot: [0, 0, 0.15] }] })
 add({ id: 'lower_cowl', ko: '로어 카울', en: 'Lower Cowl', geometry: { type: 'box', size: [520, 220, 30] }, mount: [0, 0, 0], material: 'primer', paintable: true,
-  instances: [{ suffix: 'l', mount: [60, 250, -270] }, { suffix: 'r', mount: [60, 250, 270] }] })
+  instances: [{ suffix: 'l', mount: [0, 250, -270] }, { suffix: 'r', mount: [0, 250, 270] }] })
 add({ id: 'windscreen', ko: '윈드스크린', en: 'Windscreen', geometry: { type: 'box', size: [12, 220, 300] }, mount: [560, 1000, 0], rot: [0, 0, 0.55], material: 'glass', small: true })
 add({ id: 'tail_cowl', ko: '테일 카울', en: 'Tail Cowl', geometry: cowl([520, 160, 280], 0.6), mount: [-620, 760, 0], material: 'primer', paintable: true, camera: { azimuth: -150, polar: 60, distance: 3200, target: [-600, 800, 0] } })
 add({ id: 'rear_hugger', ko: '리어 허거', en: 'Rear Hugger', geometry: { type: 'frustum', bottom: [360, 170], top: [300, 160], h: 30 }, mount: [-685, 640, 0], material: 'plastic_black', small: true })

@@ -20,7 +20,7 @@ export const ninja400Product: ProductDef = {
   props: PROPS,
   materials: NINJA_MATERIALS,
   camera: {
-    initial: { azimuth: 30, polar: 64, distance: 4200 },
+    initial: { azimuth: 30, polar: 64, distance: 4800 },
     target: [0, 500, 0],
     minDistanceMm: 1200,
     maxDistanceMm: 7000,
