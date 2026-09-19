@@ -3,7 +3,7 @@
 // 부품을 추가할 때는 아래 구분 주석 자리에 add({...})를 순서대로 끼워 넣는다.
 
 import type { CameraView, Geometry, PartDef, PartInstance, ProductDef, StationDef, Vec3 } from '../../engine/types'
-import { cowl, cylZ, disc, forkLeg, keyGeometry, sprocket, tank, trellis, wheel } from './geometry'
+import { brakeDisc, cowl, cylZ, forkLeg, frameTrellis, keyGeometry, spokedWheel, subframeRails, swingarmGeometry, tank, toothedDisc } from './geometry'
 import { PAINT_VARIANTS } from './materials'
 import {
   CRANK,
@@ -13,7 +13,6 @@ import {
   FRONT_AXLE,
   FRONT_TIRE_R,
   FRONT_TIRE_W,
-  HEAD,
   REAR_AXLE,
   REAR_TIRE_R,
   REAR_TIRE_W,
@@ -124,41 +123,17 @@ const add = (d: PartInput) => {
   return d.id
 }
 
-/** 차체 절대 좌표 노드를 부품 원점(mount) 기준 상대 좌표로 옮긴다. */
-function relative(nodes: Vec3[], base: Vec3): Vec3[] {
-  return nodes.map((n) => [n[0] - base[0], n[1] - base[1], n[2] - base[2]])
-}
-
 // --- A. 프레임 ---------------------------------------------------------------
 /** 프레임 원점 = 지그 상판 높이. 프레임이 지면이 아니라 지그 위에 선다. */
 const FRAME_BASE: Vec3 = [0, 300, 0]
-// TODO: 실물 확인 — 트렐리스 노드 좌표는 사진 기준 추정
-const FRAME_NODES: Vec3[] = [
-  HEAD, // 0 스티어링 헤드
-  [300, 780, 120],
-  [300, 780, -120], // 1,2 상부 메인 튜브 시작
-  [-150, 700, 150],
-  [-150, 700, -150], // 3,4 탱크 아래
-  [-420, 560, 150],
-  [-420, 560, -150], // 5,6 스윙암 피벗 위
-  [-420, 420, 150],
-  [-420, 420, -150], // 7,8 스윙암 피벗
-  [80, 560, 140],
-  [80, 560, -140], // 9,10 엔진 앞 마운트 다운튜브
-  [200, 300, 130],
-  [200, 300, -130], // 11,12 엔진 앞 하단 마운트
-  [-250, 720, 0], // 13 백본 뒤끝
-]
-const FRAME_EDGES: Array<[number, number]> = [
-  [0, 1], [0, 2], [1, 3], [2, 4], [3, 5], [4, 6], [5, 7], [6, 8], [7, 8],
-  [0, 9], [0, 10], [9, 11], [10, 12], [9, 3], [10, 4], [1, 13], [2, 13],
-  [13, 5], [13, 6], [11, 7], [12, 8], [1, 2], [3, 4], [5, 6],
-]
+// TODO: 실물 확인 — 트렐리스 튜브 경로는 사진 기준 추정. 좌표는 geometry.ts 안에 차체 절대값으로
+// 적혀 있고 FRAME_BASE를 빼서 상대 좌표가 된다. 지그가 받치는 두 지점은 그대로다:
+// 엔진 앞 하단 마운트 (200, 300, ±138), 스윙암 피벗 (-420, 400, ±100).
 add({
   id: 'main_frame',
   ko: '메인 프레임',
   en: 'Main Frame',
-  geometry: trellis(relative(FRAME_NODES, FRAME_BASE), FRAME_EDGES, 14),
+  geometry: frameTrellis(FRAME_BASE),
   mount: FRAME_BASE,
   material: 'frame_paint',
   preplaced: true,
@@ -167,25 +142,11 @@ add({
 
 /** 서브프레임 원점 = 메인 프레임과 만나는 앞쪽 마운트 중앙 */
 const SUB_BASE: Vec3 = [-150, 700, 0]
-// TODO: 실물 확인 — 서브프레임 노드 좌표는 사진 기준 추정
-const SUB_NODES: Vec3[] = [
-  [-150, 700, 150],
-  [-150, 700, -150], // 0,1 앞쪽 마운트
-  [-820, 760, 120],
-  [-820, 760, -120], // 2,3 시트 레일 뒤끝
-  [-420, 560, 150],
-  [-420, 560, -150], // 4,5 아래쪽 마운트
-  [-780, 640, 110],
-  [-780, 640, -110], // 6,7 받침 스테이 뒤끝
-]
-const SUB_EDGES: Array<[number, number]> = [
-  [0, 2], [1, 3], [4, 6], [5, 7], [2, 3], [6, 7], [2, 6], [3, 7],
-]
 add({
   id: 'subframe',
   ko: '서브프레임',
   en: 'Subframe',
-  geometry: trellis(relative(SUB_NODES, SUB_BASE), SUB_EDGES, 11),
+  geometry: subframeRails(SUB_BASE),
   mount: SUB_BASE,
   material: 'frame_paint',
   rest: REST.main,
@@ -231,7 +192,7 @@ add({ id: 'oil_pan', ko: '오일팬', en: 'Oil Pan', geometry: { type: 'box', si
 add({ id: 'oil_filter', ko: '오일필터', en: 'Oil Filter', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 34, radiusBottom: 34, height: 80, segments: 20 }, rotation: [0, 0, -Math.PI / 2] }] }, mount: [cx + 210, cy - 90, 60], material: 'plastic_black', station: E, small: true })
 add({ id: 'starter_motor', ko: '스타터 모터', en: 'Starter Motor', geometry: cylZ(30, 120), mount: [cx - 40, cy + 100, -70], material: 'plastic_black', station: E, small: true })
 add({ id: 'water_pump', ko: '워터펌프', en: 'Water Pump', geometry: { type: 'composite', children: [{ geometry: cylZ(40, 40) }, { geometry: { type: 'box', size: [30, 30, 40] }, position: [0, 40, 0] }] }, mount: [cx + 40, cy - 60, -215], material: 'cast_alu', station: E, small: true })
-add({ id: 'drive_sprocket', ko: '드라이브 스프로킷', en: 'Drive Sprocket', geometry: sprocket(40, 8, 14), mount: [cx - 190, cy - 60, -200], material: 'steel', station: E, small: true })
+add({ id: 'drive_sprocket', ko: '드라이브 스프로킷', en: 'Drive Sprocket', geometry: toothedDisc(40, 14, 8, 13, 6), mount: [cx - 190, cy - 60, -200], material: 'steel', station: E, small: true })
 add({ id: 'engine_mount_bolt', ko: '엔진 마운트 볼트', en: 'Engine Mount Bolt', geometry: { type: 'composite', children: [{ geometry: cylZ(6, 60) }, { geometry: cylZ(11, 8), position: [0, 0, 30] }] },
   mount: [0, 0, 0], material: 'steel', marries: E, requires: ['drive_sprocket', 'subframe'], small: true, hint: '엔진 마운트 볼트 체결',
   camera: { azimuth: 30, polar: 62, distance: 3200, target: [-120, 480, 0] },
@@ -239,9 +200,8 @@ add({ id: 'engine_mount_bolt', ko: '엔진 마운트 볼트', en: 'Engine Mount 
 
 // --- C~F. 서스펜션·프런트엔드·바퀴 (Task B4) ---------------------------------
 const FW = 'front_wheel', RW = 'rear_wheel'
-add({ id: 'swingarm', ko: '스윙암', en: 'Swingarm', geometry: { type: 'composite', children: [
-  { geometry: { type: 'box', size: [300, 60, 40] }, position: [-150, 0, -130], rotation: [0, 0, 0.12] }, { geometry: { type: 'box', size: [300, 60, 40] }, position: [-150, 0, 130], rotation: [0, 0, 0.12] },
-  { geometry: { type: 'box', size: [60, 60, 300] }, position: [-30, 0, -150] }, { geometry: cylZ(20, 320), position: [0, 30, 0] } ] },
+// 스윙암 원점 = 피벗. 리어 액슬(-685, 306)은 상대 좌표로 (-265, -94, 0)이다.
+add({ id: 'swingarm', ko: '스윙암', en: 'Swingarm', geometry: swingarmGeometry([REAR_AXLE[0] + 420, REAR_AXLE[1] - 400, 0]),
   mount: [-420, 400, 0], material: 'cast_alu', requires: ['engine_mount_bolt'] })
 add({ id: 'rear_shock', ko: '리어 쇼크', en: 'Rear Shock', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 22, radiusBottom: 22, height: 180, segments: 16 } }, { geometry: { type: 'cylinder', radiusTop: 8, radiusBottom: 8, height: 110, segments: 10 }, position: [0, 180, 0] }, ...[0, 1, 2, 3, 4, 5].map((i) => ({ geometry: { type: 'torus', radius: 34, tube: 5 } as Geometry, position: [0, 20 + i * 28, 0] as Vec3 }))] },
   mount: [-470, 380, 0], rot: [0, 0, 0.35], material: 'steel', small: true })
@@ -258,14 +218,14 @@ add({ id: 'clip_on', ko: '클립온 핸들', en: 'Clip-on Handlebar', geometry: 
   mount: [topX - 20, topY + 20, 0], material: 'polished_alu', small: true, camera: { azimuth: 20, polar: 50, distance: 2200, target: [430, 900, 0] },
   instances: [{ suffix: 'l', mount: [topX - 20, topY + 20, -110], rot: [0, Math.PI, 0] }, { suffix: 'r', mount: [topX - 20, topY + 20, 110], rot: [0, 0, 0] }] })
 // (오른쪽 클립온의 원통은 +z로 뻗고 왼쪽은 y축 180도 회전으로 -z로 뻗는다. 그립은 원통 끝 110~230 구간.)
-add({ id: 'front_wheel', ko: '앞 휠 · 타이어', en: 'Front Wheel', geometry: wheel(FRONT_TIRE_R, FRONT_TIRE_W, RIM_R), mount: FRONT_AXLE, material: 'polished_alu', station: FW, requires: ['clip_on'] })
-add({ id: 'front_disc', ko: '앞 브레이크 디스크', en: 'Front Brake Disc', geometry: disc(155, 5), mount: [FRONT_AXLE[0], FRONT_AXLE[1], -62], material: 'stainless', station: FW })
+add({ id: 'front_wheel', ko: '앞 휠 · 타이어', en: 'Front Wheel', geometry: spokedWheel(FRONT_TIRE_R, FRONT_TIRE_W, RIM_R), mount: FRONT_AXLE, material: 'polished_alu', station: FW, requires: ['clip_on'] })
+add({ id: 'front_disc', ko: '앞 브레이크 디스크', en: 'Front Brake Disc', geometry: brakeDisc(155, 5), mount: [FRONT_AXLE[0], FRONT_AXLE[1], -62], material: 'stainless', station: FW })
 add({ id: 'front_axle', ko: '앞 액슬', en: 'Front Axle', geometry: { type: 'composite', children: [{ geometry: cylZ(9, 240) }, { geometry: cylZ(16, 10), position: [0, 0, 120] }] }, mount: FRONT_AXLE, material: 'steel', marries: FW, requires: ['front_disc', 'fork'], small: true, hint: '앞 액슬 체결', camera: { azimuth: 40, polar: 62, distance: 2400, target: [685, 400, 0] } })
 add({ id: 'front_caliper', ko: '프런트 캘리퍼', en: 'Front Brake Caliper', geometry: { type: 'box', size: [90, 60, 40] }, mount: [FRONT_AXLE[0] + 40, FRONT_AXLE[1] + 120, -78], material: 'cast_alu', small: true })
 add({ id: 'front_fender', ko: '프런트 펜더', en: 'Front Fender', geometry: { type: 'composite', children: [{ geometry: { type: 'frustum', bottom: [420, 130], top: [300, 120], h: 40 } }] }, mount: [FRONT_AXLE[0], FRONT_AXLE[1] + 300, 0], material: 'primer', paintable: true })
-add({ id: 'rear_wheel', ko: '뒤 휠 · 타이어', en: 'Rear Wheel', geometry: wheel(REAR_TIRE_R, REAR_TIRE_W, RIM_R), mount: REAR_AXLE, material: 'polished_alu', station: RW })
-add({ id: 'rear_disc', ko: '리어 브레이크 디스크', en: 'Rear Brake Disc', geometry: disc(110, 5), mount: [REAR_AXLE[0], REAR_AXLE[1], 80], material: 'stainless', station: RW })
-add({ id: 'rear_sprocket', ko: '리어 스프로킷', en: 'Rear Sprocket', geometry: sprocket(118, 7, 41), mount: [REAR_AXLE[0], REAR_AXLE[1], -200], material: 'steel', station: RW })
+add({ id: 'rear_wheel', ko: '뒤 휠 · 타이어', en: 'Rear Wheel', geometry: spokedWheel(REAR_TIRE_R, REAR_TIRE_W, RIM_R), mount: REAR_AXLE, material: 'polished_alu', station: RW })
+add({ id: 'rear_disc', ko: '리어 브레이크 디스크', en: 'Rear Brake Disc', geometry: brakeDisc(110, 5), mount: [REAR_AXLE[0], REAR_AXLE[1], 80], material: 'stainless', station: RW })
+add({ id: 'rear_sprocket', ko: '리어 스프로킷', en: 'Rear Sprocket', geometry: toothedDisc(118, 41, 7, 24, 10), mount: [REAR_AXLE[0], REAR_AXLE[1], -200], material: 'steel', station: RW })
 add({ id: 'rear_axle', ko: '뒤 액슬', en: 'Rear Axle', geometry: { type: 'composite', children: [{ geometry: cylZ(10, 420) }, { geometry: cylZ(17, 10), position: [0, 0, 210] }] }, mount: REAR_AXLE, material: 'steel', marries: RW, requires: ['rear_sprocket', 'swingarm'], small: true, hint: '뒤 액슬 체결', camera: { azimuth: -40, polar: 62, distance: 2400, target: [-685, 400, 0] } })
 add({ id: 'rear_caliper', ko: '리어 캘리퍼', en: 'Rear Brake Caliper', geometry: { type: 'box', size: [70, 50, 36] }, mount: [REAR_AXLE[0] - 20, REAR_AXLE[1] + 80, 100], material: 'cast_alu', small: true })
 add({ id: 'chain', ko: '체인', en: 'Drive Chain', geometry: { type: 'composite', children: [

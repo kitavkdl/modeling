@@ -1,10 +1,12 @@
 // 닌자 400 재질표 — 이름은 parts.ts와 형상 함수가 참조하는 키다.
 
+import * as THREE from 'three'
 import type { MaterialSpec, Variant } from '../../engine/types'
 
 export const NINJA_MATERIALS: Record<string, MaterialSpec> = {
   frame_paint: { color: '#141517', metalness: 0.4, roughness: 0.45 },
-  cast_alu: { color: '#8b8f94', metalness: 0.7, roughness: 0.5 },
+  // 스윙암은 뚜껑 없는 loft 껍데기라 안쪽 면도 그려야 구멍이 뚫려 보이지 않는다.
+  cast_alu: { color: '#8b8f94', metalness: 0.7, roughness: 0.5, side: THREE.DoubleSide },
   polished_alu: { color: '#a8abb0', metalness: 0.9, roughness: 0.3 },
   steel: { color: '#a9adb3', metalness: 0.85, roughness: 0.4 },
   stainless: { color: '#c5c8cc', metalness: 0.9, roughness: 0.35 },

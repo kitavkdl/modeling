@@ -4,6 +4,7 @@ import type { CompositeChild, PartInstance } from '../../engine/types'
 import { validateGeometry } from '../../engine/types'
 import { PARTS, PART_BY_ID, PROPS, STATIONS } from './parts'
 import { NINJA_MATERIALS } from './materials'
+import { assemblyBounds } from './test-utils'
 
 /** 헤더 인스턴스의 composite children을 root(mountPosition/mountRotation) 아래 Object3D로 붙이고,
  *  각 원통 축을 10mm 간격으로 샘플링해 월드 좌표 배열을 돌려준다. */
@@ -167,6 +168,61 @@ describe('ninja400 parts', () => {
     let minDist = Infinity
     for (const a of lPts) for (const b of rPts) minDist = Math.min(minDist, a.distanceTo(b))
     expect(minDist).toBeGreaterThanOrEqual(38)
+  })
+  it('주요 부품의 형상이 곡면 프리미티브를 쓴다', () => {
+    const uses = (id: string, type: string) => JSON.stringify(PART_BY_ID[id].geometry).includes(`"type":"${type}"`)
+    expect(uses('main_frame', 'tube')).toBe(true)
+    expect(uses('subframe', 'tube')).toBe(true)
+    expect(uses('swingarm', 'loft')).toBe(true)
+    expect(uses('front_wheel', 'lathe')).toBe(true)
+    expect(uses('front_wheel', 'extrude')).toBe(true)
+    expect(uses('rear_wheel', 'extrude')).toBe(true)
+    expect(uses('rear_sprocket', 'extrude')).toBe(true)
+    expect(uses('drive_sprocket', 'extrude')).toBe(true)
+    expect(uses('front_disc', 'extrude')).toBe(true)
+    expect(uses('rear_disc', 'extrude')).toBe(true)
+    expect(uses('fork', 'lathe')).toBe(true)
+  })
+  it('전체 장착 bbox가 실물 외곽(1990×710×1120, ±10%) 안이다', () => {
+    // 미러는 기본으로 빠진다(assemblyBounds의 exclude 기본값).
+    const b = assemblyBounds(PARTS)
+    expect(b.max[0] - b.min[0]).toBeGreaterThan(1990 * 0.9)
+    expect(b.max[0] - b.min[0]).toBeLessThan(1990 * 1.1)
+    expect(b.max[2] - b.min[2]).toBeLessThan(760)
+    expect(b.max[1]).toBeLessThan(1120 * 1.1)
+    expect(b.min[1]).toBeGreaterThan(-5)
+  })
+  it('프레임·서브프레임 튜브가 크랭크케이스를 관통하지 않는다', () => {
+    // 크랭크케이스 x -330..90, y 280..550, |z| <= 190 을 튜브 반지름만큼 넓힌 상자
+    for (const id of ['main_frame', 'subframe']) {
+      const part = PART_BY_ID[id]
+      const root = new THREE.Object3D()
+      root.position.fromArray(part.mountPosition)
+      root.rotation.fromArray(part.mountRotation)
+      root.updateMatrixWorld(true)
+      const g = part.geometry
+      if (g.type !== 'composite') throw new Error(`${id} geometry must be composite`)
+      for (const child of g.children as CompositeChild[]) {
+        if (child.geometry.type !== 'tube') continue
+        const r = child.geometry.radius
+        const obj = new THREE.Object3D()
+        if (child.position) obj.position.fromArray(child.position)
+        if (child.rotation) obj.rotation.fromArray(child.rotation)
+        root.add(obj)
+        root.updateMatrixWorld(true)
+        const curve = new THREE.CatmullRomCurve3(
+          child.geometry.path.map((p) => new THREE.Vector3(p[0], p[1], p[2])),
+          false,
+          'centripetal',
+        )
+        for (const p of curve.getPoints(160)) {
+          const w = obj.localToWorld(p.clone())
+          const inside =
+            w.x >= -330 - r && w.x <= 90 + r && w.y >= 280 - r && w.y <= 550 + r && Math.abs(w.z) <= 190 + r
+          expect(inside, `${id} (${w.x.toFixed(0)}, ${w.y.toFixed(0)}, ${w.z.toFixed(0)})`).toBe(false)
+        }
+      }
+    }
   })
   it('the chain wraps the drive and rear sprockets on the same z plane with correct tangents', () => {
     const driveSprocket = PART_BY_ID.drive_sprocket
