@@ -53,7 +53,7 @@ src/products/index.ts              (수정) PRODUCTS에 ninja400Product 추가
 
 ---
 
-### Task B1: 엔진 손질 (소품 재질 fallback, 그림자 스케일, 테스트 파일명)
+### Task 1: 엔진 손질 (소품 재질 fallback, 그림자 스케일, 테스트 파일명)
 
 **Files:**
 - Modify: `src/engine/scene/Stations.tsx`, `src/engine/scene/Environment.tsx`, `src/engine/materials.ts`
@@ -106,7 +106,7 @@ export const fallbackMaterial = new THREE.MeshStandardMaterial({ color: '#6b6d70
 
 ---
 
-### Task B2: 닌자 400 골격 — 제원, 형상 함수, 재질, 프레임·서브프레임·작업대, 제품 등록
+### Task 2: 닌자 400 골격 — 제원, 형상 함수, 재질, 프레임·서브프레임·작업대, 제품 등록
 
 **Files:**
 - Create: `src/products/ninja400/spec.ts`, `geometry.ts`, `materials.ts`, `parts.ts`, `product.tsx`, `index.ts`, `parts.test.ts`, `product.test.ts`
@@ -423,7 +423,7 @@ export const ninja400Product: ProductDef = {
 
 ---
 
-### Task B3: 엔진 작업대 부품 27개 + 엔진 마운트 볼트
+### Task 3: 엔진 작업대 부품 27개 + 엔진 마운트 볼트
 
 **Files:** Modify `src/products/ninja400/parts.ts` (B 구획), `parts.test.ts`
 
@@ -498,7 +498,7 @@ add({ id: 'engine_mount_bolt', ko: '엔진 마운트 볼트', en: 'Engine Mount 
 
 ---
 
-### Task B4: 리어 서스펜션, 프런트 엔드, 앞뒤 바퀴 작업대, 체인
+### Task 4: 리어 서스펜션, 프런트 엔드, 앞뒤 바퀴 작업대, 체인
 
 **Interfaces:** id 순서: `swingarm, rear_shock, shock_linkage, steering_stem, fork(×2), top_clamp, clip_on(×2), front_wheel, front_disc, front_axle(marries front_wheel, requires ['front_disc','fork']), front_caliper, front_fender(paintable), rear_wheel, rear_disc, rear_sprocket, rear_axle(marries rear_wheel, requires ['rear_sprocket','swingarm']), rear_caliper, chain(requires ['rear_axle','drive_sprocket'])`.
 
@@ -559,7 +559,7 @@ add({ id: 'chain', ko: '체인', en: 'Drive Chain', geometry: { type: 'composite
 
 ---
 
-### Task B5: 냉각, 전장, 흡기·연료, 배기, 조작계
+### Task 5: 냉각, 전장, 흡기·연료, 배기, 조작계
 
 **Interfaces:** id 순서: `radiator, cooling_fan, radiator_hose(×2), coolant_reservoir, battery, ecu, instrument_cluster, headlight, taillight, turn_signal(×4), airbox, throttle_body, fuel_tank(paintable), exhaust_header(×2), exhaust_collector, muffler, brake_pedal, shift_lever, rider_peg(×2), passenger_peg(×2), sidestand, lever(×2)`. 램프 부품 재질은 `lamp_off`(점등은 renderInstance). 이 태스크의 첫 부품 `radiator`는 `requires: ['chain']`.
 
@@ -613,7 +613,7 @@ add({ id: 'lever', ko: '브레이크 · 클러치 레버', en: 'Brake / Clutch L
 
 ---
 
-### Task B6: 외장 + 도색 (변형)
+### Task 6: 외장 + 도색 (변형)
 
 **Files:** Modify `parts.ts` (L·M 구획), `parts.test.ts`; Create `render/Paintable.tsx`; Modify `product.tsx` (`renderInstance`)
 
@@ -698,7 +698,7 @@ export function Paintable({ part, inst }: RenderInstanceCtx) {
 
 ---
 
-### Task B7: 마무리 — 키, 시동, 스로틀, 램프, 엔진 진동, 엔진 사운드
+### Task 7: 마무리 — 키, 시동, 스로틀, 램프, 엔진 진동, 엔진 사운드
 
 **Files:** Create `finale/throttleState.ts`, `finale/Key.tsx`, `finale/Starter.tsx`, `finale/Throttle.tsx`, `finale/Finale.tsx`, `render/Lamps.tsx`, `render/EngineShake.tsx`, `audio/engineSound.ts`, `audio/engineSound.test.ts`; Modify `product.tsx`
 
@@ -752,7 +752,7 @@ export function firingTimes(rpm: number, from: number, to: number): number[] {
 
 ---
 
-### Task B8: 통합 확인과 조정
+### Task 8: 통합 확인과 조정
 
 **Files:** 필요 시 `parts.ts` 좌표 미세 조정, `product.tsx` drag/camera 수치, `styles.css`(트레이 80칸 가로 스크롤 확인)
 
