@@ -5,8 +5,8 @@ import type { PartDef } from '../engine/types'
 import { ASSEMBLY_LIFT, MM, PARTS, PART_BY_ID } from '../products/keyboard/parts'
 import { useAssembly } from '../store/assembly'
 import { easeOutBack, lerp } from '../utils/easing'
-import { GhostSet } from './Ghosts'
-import { MOUNT_MS, MountedInstanceView } from './MountedParts'
+import { GhostSet } from '../engine/scene/Ghosts'
+import { MOUNT_MS, MountedInstanceView } from '../engine/scene/MountedParts'
 
 const SEAT_PART_ID = PARTS.find((p) => p.marries === 'sandwich')?.id ?? 'gasket'
 

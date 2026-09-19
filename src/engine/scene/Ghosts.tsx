@@ -1,8 +1,7 @@
-import type { PartDef, PartInstance } from '../engine/types'
-import { MM } from '../products/keyboard/parts'
-import { useAssembly } from '../store/assembly'
-import { PartGeometry } from './PartGeometry'
-import { ghostHoverMaterial, ghostMaterial } from './materials'
+import { useAssembly } from '../context'
+import { ghostHoverMaterial, ghostMaterial } from '../materials'
+import { PartGeometry } from '../geometry/PartGeometry'
+import { MM, type PartDef, type PartInstance } from '../types'
 
 // 선택한 부품의 아직 장착되지 않은 인스턴스를 장착 위치에 반투명으로 보여준다.
 // 장착은 DraggablePart가 한다. 여기서는 놓으면 장착될 자리만 밝힌다.
