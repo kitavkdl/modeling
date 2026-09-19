@@ -1,6 +1,6 @@
 import * as THREE from 'three'
-import type { Phase } from '../store/assembly'
-import { RGB_COLOR, RGB_WAVE_COLOR } from './materials'
+import type { Phase } from '../../../engine/types'
+import { RGB_COLOR, RGB_WAVE_COLOR } from '../materials'
 
 export const BOOT_WAVE_MS = 800
 export const STILL_MS = 300

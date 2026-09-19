@@ -1,5 +1,7 @@
-// Task 4 시점의 최소본 — Finale은 Task 7에서 채운다.
+// 키보드 제품 정의 — 완성본 (Task 7)
 import type { ProductDef } from '../../engine/types'
+import { KeyboardFinale } from './finale/Finale'
+import { Keycap } from './finale/Keycap'
 import { KEYBOARD_MATERIALS } from './materials'
 import { PARTS, STATIONS } from './parts'
 
@@ -21,7 +23,8 @@ export const keyboardProduct: ProductDef = {
   },
   drag: { snapMm: 60, paintMm: 12, hoverMm: 30, grabMinMm: 50 },
   environment: { contactShadowSizeMm: [600, 450], shadowBoundsMm: 300 },
-  Finale: () => null,
+  Finale: KeyboardFinale,
+  renderInstance: (ctx) => (ctx.part.id === 'keycap' ? <Keycap {...ctx} /> : null),
   hints: { complete: '케이블 연결', on: '키캡 타건' },
   phasesAfterComplete: ['plugging', 'still', 'booting', 'on'],
 }

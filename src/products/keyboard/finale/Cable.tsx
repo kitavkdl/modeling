@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
-import { CABLE, MM } from '../products/keyboard/parts'
-import { useAssembly } from '../store/assembly'
-import { easeInOutCubic, lerp } from '../utils/easing'
-import { cableMaterial, plugMaterial } from './materials'
+import { useAssembly, useAssemblyStore, useMaterials } from '../../../engine/context'
+import { easeInOutCubic, lerp } from '../../../engine/easing'
+import { CABLE, MM } from '../parts'
 import { BOOT_WAVE_MS, STILL_MS } from './rgb'
 
 const PLUG_MS = 450
 
 /** USB-C 케이블. 조립 완료 후 등장하고, 클릭하면 포트에 꽂힌다. */
 export function Cable() {
+  const store = useAssemblyStore()
+  const materials = useMaterials()
   const phase = useAssembly((s) => s.phase)
   const group = useRef<THREE.Group>(null)
   const [hover, setHover] = useState(false)
@@ -18,7 +19,7 @@ export function Cable() {
   useFrame(() => {
     const g = group.current
     if (!g) return
-    const s = useAssembly.getState()
+    const s = store.getState()
     const rest = CABLE.restPosition
     const dst = CABLE.pluggedPosition
     if (s.phase === 'complete') {
@@ -36,19 +37,19 @@ export function Cable() {
   })
 
   const onPointerDown = useCallback((e: ThreeEvent<PointerEvent>) => {
-    if (useAssembly.getState().phase !== 'complete') return
+    if (store.getState().phase !== 'complete') return
     e.stopPropagation()
     setHover(false)
     document.body.style.cursor = ''
-    useAssembly.getState().plugCable()
-  }, [])
+    if (store.getState().phase === 'complete') store.getState().advancePhase()
+  }, [store])
 
   const onPointerOver = useCallback((e: ThreeEvent<PointerEvent>) => {
-    if (useAssembly.getState().phase !== 'complete') return
+    if (store.getState().phase !== 'complete') return
     e.stopPropagation()
     setHover(true)
     document.body.style.cursor = 'pointer'
-  }, [])
+  }, [store])
   const onPointerOut = useCallback(() => {
     setHover(false)
     document.body.style.cursor = ''
@@ -59,10 +60,10 @@ export function Cable() {
   const [pw, ph, pd] = CABLE.plug
   return (
     <group ref={group} onPointerDown={onPointerDown} onPointerOver={onPointerOver} onPointerOut={onPointerOut}>
-      <mesh material={plugMaterial} castShadow>
+      <mesh material={materials.get('plug')} castShadow>
         <boxGeometry args={[pw * MM, ph * MM, pd * MM]} />
       </mesh>
-      <mesh material={cableMaterial} position={[0, 0, (-pd / 2 - CABLE.cordLength / 2) * MM]} rotation={[Math.PI / 2, 0, 0]} castShadow>
+      <mesh material={materials.get('cable')} position={[0, 0, (-pd / 2 - CABLE.cordLength / 2) * MM]} rotation={[Math.PI / 2, 0, 0]} castShadow>
         <cylinderGeometry args={[CABLE.cordR * MM, CABLE.cordR * MM, CABLE.cordLength * MM, 12]} />
       </mesh>
       {hover ? (
@@ -77,22 +78,14 @@ export function Cable() {
 
 /** 전원 시퀀스 타이머: plugging → still(0.3s) → booting(0.8s) → on */
 export function PowerSequence() {
-  const setPhase = useAssembly((s) => s.setPhase)
-  const armed = useRef(false)
-
-  useEffect(() => {
-    armed.current = true
-    return () => {
-      armed.current = false
-    }
-  }, [])
+  const store = useAssemblyStore()
 
   useFrame(() => {
-    const s = useAssembly.getState()
+    const s = store.getState()
     const dt = performance.now() - s.phaseAt
-    if (s.phase === 'plugging' && dt >= PLUG_MS) setPhase('still')
-    else if (s.phase === 'still' && dt >= STILL_MS) setPhase('booting')
-    else if (s.phase === 'booting' && dt >= BOOT_WAVE_MS) setPhase('on')
+    if (s.phase === 'plugging' && dt >= PLUG_MS) s.advancePhase()
+    else if (s.phase === 'still' && dt >= STILL_MS) s.advancePhase()
+    else if (s.phase === 'booting' && dt >= BOOT_WAVE_MS) s.advancePhase()
   })
   return null
 }

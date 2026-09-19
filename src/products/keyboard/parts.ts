@@ -192,7 +192,7 @@ const bottomCase = single({
   restPosition: [0, REST_Y, REST_Z - 30],
   requires: [],
   material: 'aluminum',
-  cameraView: { azimuth: 20, polar: 58, distance: 620 },
+  cameraView: { azimuth: 20, polar: 58, distance: 620, target: [0, 0, 0] },
   hint: '하부 케이스 장착',
 })
 
@@ -208,7 +208,7 @@ const bottomFoam = single({
   mountRotation: [0, 0, 0],
   requires: ['bottom_case'],
   material: 'foam',
-  cameraView: { azimuth: 10, polar: 40, distance: 560 },
+  cameraView: { azimuth: 10, polar: 40, distance: 560, target: [0, 2.4, 0] },
   hint: '하판 흡음폼 장착',
 })
 
@@ -228,7 +228,7 @@ const stabilizers: PartDef = {
   count: stabilizerKeys.length,
   material: 'plastic',
   station: 'sandwich',
-  cameraView: { azimuth: -15, polar: 42, distance: 520 },
+  cameraView: { azimuth: -15, polar: 42, distance: 520, target: [0, 34.6, 0] },
   hint: '스태빌라이저 장착',
   instances: stabilizerKeys.map((k) => {
     const [x, z] = keyCenter(k)
@@ -255,7 +255,7 @@ const pcb = single({
   requires: ['stabilizer'],
   material: 'pcb',
   station: 'sandwich',
-  cameraView: { azimuth: 25, polar: 48, distance: 560 },
+  cameraView: { azimuth: 25, polar: 48, distance: 560, target: [0, 33.6, 0] },
   hint: 'PCB 장착',
 })
 
@@ -269,7 +269,7 @@ const pcbFoam = single({
   requires: ['pcb'],
   material: 'foam',
   station: 'sandwich',
-  cameraView: { azimuth: 25, polar: 48, distance: 560 },
+  cameraView: { azimuth: 25, polar: 48, distance: 560, target: [0, 34.6, 0] },
   hint: 'PCB 폼 장착',
 })
 
@@ -283,7 +283,7 @@ const plate = single({
   requires: ['pcb_foam'],
   material: 'aluminum',
   station: 'sandwich',
-  cameraView: { azimuth: 25, polar: 48, distance: 560 },
+  cameraView: { azimuth: 25, polar: 48, distance: 560, target: [0, 36.7, 0] },
   hint: '플레이트 장착',
 })
 
@@ -300,7 +300,7 @@ const switches: PartDef = {
   count: KEY_COUNT,
   material: 'plastic',
   station: 'sandwich',
-  cameraView: { azimuth: 0, polar: 35, distance: 500 },
+  cameraView: { azimuth: 0, polar: 35, distance: 500, target: [0, 37.6, 0] },
   hint: '스위치 장착',
   instances: KEY_LAYOUT.map((k) => {
     const [x, z] = keyCenter(k)
@@ -340,7 +340,7 @@ const gasket = single({
   requires: ['switch'],
   material: 'rubber',
   marries: 'sandwich',
-  cameraView: { azimuth: 35, polar: 62, distance: 600 },
+  cameraView: { azimuth: 35, polar: 62, distance: 600, target: [0, 8.7, 0] },
   hint: '조립체 안착',
 })
 
@@ -353,7 +353,7 @@ const topCase = single({
   mountRotation: [0, 0, 0],
   requires: ['gasket'],
   material: 'aluminum',
-  cameraView: { azimuth: 20, polar: 55, distance: 600 },
+  cameraView: { azimuth: 20, polar: 55, distance: 600, target: [0, 13.2, 0] },
   hint: '상부 케이스 장착',
 })
 
@@ -373,7 +373,7 @@ const keycaps: PartDef = {
   requires: ['top_case'],
   count: KEY_COUNT,
   material: 'keycap',
-  cameraView: { azimuth: 0, polar: 40, distance: 520 },
+  cameraView: { azimuth: 0, polar: 40, distance: 520, target: [0, 16.3, 0] },
   hint: '키캡 장착',
   instances: KEY_LAYOUT.map((k) => {
     const [x, z] = keyCenter(k)

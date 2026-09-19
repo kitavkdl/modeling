@@ -1,9 +1,9 @@
 import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { LAYOUT_D, LAYOUT_W, MM, Y_KEYCAP } from '../products/keyboard/parts'
-import { useAssembly } from '../store/assembly'
-import { RGB_COLOR } from './materials'
+import { useAssemblyStore } from '../../../engine/context'
+import { RGB_COLOR } from '../materials'
+import { LAYOUT_D, LAYOUT_W, MM, Y_KEYCAP } from '../parts'
 import { BOOT_WAVE_MS, BREATH_PERIOD_MS } from './rgb'
 
 // 키 개수만큼 PointLight를 두는 대신, 키캡 바로 아래(스위치 윗면 높이)에 얹은
@@ -37,6 +37,7 @@ const fragment = /* glsl */ `
 `
 
 export function PlateGlow() {
+  const store = useAssemblyStore()
   const mat = useRef<THREE.ShaderMaterial>(null)
   const uniforms = useMemo(
     () => ({
@@ -50,7 +51,7 @@ export function PlateGlow() {
   useFrame(() => {
     const m = mat.current
     if (!m) return
-    const s = useAssembly.getState()
+    const s = store.getState()
     const now = performance.now()
     if (s.phase === 'booting') {
       const t = (now - s.phaseAt) / BOOT_WAVE_MS
