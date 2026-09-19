@@ -55,7 +55,7 @@ const DELAY_TAPS: Array<{ timeMs: number; gain: number }> = [
   { timeMs: 23, gain: 0.12 },
 ]
 
-const clamp01 = (t: number) => (t < 0 ? 0 : t > 1 ? 1 : t)
+const clamp01 = (t: number) => (Number.isFinite(t) ? (t < 0 ? 0 : t > 1 ? 1 : t) : 0)
 
 /** 배기 공명 — 스로틀을 열수록 공명점이 15% 올라가고 Q가 서며 머플러가 열린다 */
 export function resonanceFor(throttle: number): { freqs: [number, number, number]; q: number; lowpassHz: number } {
