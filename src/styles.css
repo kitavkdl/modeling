@@ -86,7 +86,7 @@ body,
 
 .hud-hint {
   left: 50%;
-  bottom: 148px;
+  bottom: 196px;
   transform: translateX(-50%);
   display: flex;
   align-items: center;

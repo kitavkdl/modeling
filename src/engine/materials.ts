@@ -37,16 +37,30 @@ export function createMaterialRegistry(specs: Record<string, MaterialSpec>): Mat
 
 export const fallbackMaterial = new THREE.MeshStandardMaterial({ color: '#6b6d70', metalness: 0.2, roughness: 0.8 })
 
+// 고스트는 다른 부품 안쪽(크랭크케이스 속 크랭크축, 포크 사이 액슬)에 놓이는 일이 많아
+// 깊이 검사를 끄고 항상 위에 그린다. 불투명도는 Ghosts가 맥동시킨다.
 export const ghostMaterial = new THREE.MeshBasicMaterial({
   color: '#ffffff',
   transparent: true,
-  opacity: 0.3,
+  opacity: 0.4,
   depthWrite: false,
+  depthTest: false,
 })
 
 export const ghostHoverMaterial = new THREE.MeshBasicMaterial({
   color: '#ffffff',
   transparent: true,
-  opacity: 0.55,
+  opacity: 0.8,
   depthWrite: false,
+  depthTest: false,
+})
+
+/** 스냅 반경을 바닥에 눕힌 링으로 보여 주는 재질 */
+export const snapRingMaterial = new THREE.MeshBasicMaterial({
+  color: '#ffffff',
+  transparent: true,
+  opacity: 0.35,
+  depthWrite: false,
+  depthTest: false,
+  side: THREE.DoubleSide,
 })
