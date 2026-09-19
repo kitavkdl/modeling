@@ -1,12 +1,6 @@
 import { useEffect } from 'react'
 import { PARTS, PART_BY_ID } from '../data/parts'
-import { isPartComplete, type MountMode, useAssembly } from '../store/assembly'
-
-const MODES: Array<{ id: MountMode; label: string }> = [
-  { id: 'single', label: '개별 클릭' },
-  { id: 'paint', label: '드래그 페인팅' },
-  { id: 'all', label: '전부 장착' },
-]
+import { isPartComplete, useAssembly } from '../store/assembly'
 
 function hintFor(): string {
   const s = useAssembly.getState()
@@ -31,8 +25,6 @@ function hintFor(): string {
 export function Hud() {
   const mounted = useAssembly((s) => s.mounted)
   const phase = useAssembly((s) => s.phase)
-  const mode = useAssembly((s) => s.mode)
-  const setMode = useAssembly((s) => s.setMode)
   const undo = useAssembly((s) => s.undo)
   const reset = useAssembly((s) => s.reset)
   const history = useAssembly((s) => s.history)
@@ -43,7 +35,7 @@ export function Hud() {
   const doneCount = PARTS.filter((p) => isPartComplete(mounted, p)).length
   const canUndo = history.length > 0 && (phase === 'assembly' || phase === 'complete')
   const selected = selectedPartId ? PART_BY_ID[selectedPartId] : null
-  const showMountAll = selected && selected.count > 1 && mode === 'all'
+  const showMountAll = selected && selected.count > 1
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -67,13 +59,6 @@ export function Hud() {
       </div>
 
       <div className="hud hud-tr">
-        <div className="segmented">
-          {MODES.map((m) => (
-            <button key={m.id} className={mode === m.id ? 'is-on' : ''} onClick={() => setMode(m.id)}>
-              {m.label}
-            </button>
-          ))}
-        </div>
         <div className="hud-actions">
           <button className="btn" disabled={!canUndo} onClick={undo} title="Ctrl+Z">
             실행 취소
@@ -87,8 +72,8 @@ export function Hud() {
       <div className="hud hud-hint">
         <span className="hint-text">{hintFor()}</span>
         {showMountAll ? (
-          <button className="btn btn-primary" disabled={sequencing} onClick={() => mountAll(selected.id)}>
-            {selected.nameKo} 전부 장착
+          <button className="btn" disabled={sequencing} onClick={() => mountAll(selected.id)}>
+            전부 장착
           </button>
         ) : null}
       </div>

@@ -4,7 +4,7 @@ import { CameraRig } from './CameraRig'
 import { Floor, Lights } from './Environment'
 import { Keyboard } from './Keyboard'
 import { PlateGlow } from './PlateGlow'
-import { StagedPart } from './StagedPart'
+import { DraggablePart } from './DraggablePart'
 
 export function Scene() {
   return (
@@ -21,7 +21,7 @@ export function Scene() {
       <Lights />
       <Floor />
       <Keyboard />
-      <StagedPart />
+      <DraggablePart />
       <PlateGlow />
       <Cable />
       <PowerSequence />

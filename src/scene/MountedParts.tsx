@@ -30,17 +30,23 @@ export function MountedInstanceView({ part, inst, record }: Props) {
   const group = useRef<THREE.Group>(null)
   const end = inst.mountPosition
 
-  // 시작점: 단일 부품은 대기 위치에서, 다수 부품은 바로 위에서.
+  // 시작점: 드래그로 놓았다면 그 자리(record.from, 월드 mm → 그룹 로컬).
+  // 아니면 단일 부품은 대기 위치에서, 다수 부품은 바로 위에서.
   const start = useMemo<Vec3>(() => {
+    const lift = part.subassembly ? ASSEMBLY_LIFT : 0
+    if (record.from) {
+      const f = record.from
+      return part.count === 1 ? [f[0], f[1] - lift, f[2]] : f
+    }
     if (part.count === 1) {
       const r = part.restPosition
-      const lift = part.subassembly ? ASSEMBLY_LIFT : 0
       return [r[0], r[1] - lift, r[2]]
     }
     return [end[0], end[1] + DROP_MM, end[2]]
-  }, [part, end])
+  }, [part, end, record.from])
 
-  const arc = part.count === 1 ? ARC_MM : 0
+  // 대기 위치에서 날아올 때만 아치를 그린다. 드래그로 놓은 것은 바로 내려앉는다.
+  const arc = part.count === 1 && !record.from ? ARC_MM : 0
 
   useFrame(() => {
     const g = group.current

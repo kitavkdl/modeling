@@ -150,34 +150,6 @@ body,
   gap: 8px;
 }
 
-.segmented {
-  display: flex;
-  border: 1px solid var(--line-strong);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.segmented button {
-  font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.06em;
-  color: var(--fg-dim);
-  background: transparent;
-  border: 0;
-  border-right: 1px solid var(--line);
-  padding: 7px 12px;
-  cursor: pointer;
-}
-
-.segmented button:last-child {
-  border-right: 0;
-}
-
-.segmented button.is-on {
-  color: var(--bg);
-  background: var(--fg);
-}
-
 /* --- Tray ----------------------------------------------------------------- */
 
 .tray {

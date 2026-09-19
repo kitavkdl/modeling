@@ -217,9 +217,11 @@ export interface PartDef {
   hint: string
 }
 
-// 대기 위치: 케이스 뒤쪽. 카메라(앞·위)에서 멀어 화면을 가리지 않는다.
+// 대기 위치. 큰 부품은 케이스 뒤쪽, 작은 부품은 케이스 오른쪽 옆.
+// 뒤쪽은 공중에 뜬 샌드위치에 가려질 수 있어 작은 부품은 옆에 둔다.
 const REST_Z = -130
 const REST_Y = 6
+const REST_SIDE: Vec3 = [215, REST_Y, 20]
 
 function single(
   def: Omit<PartDef, 'instances' | 'count' | 'restPosition'> & { restPosition?: Vec3 },
@@ -288,7 +290,7 @@ const stabilizers: PartDef = {
   nameKo: '스태빌라이저',
   nameEn: 'Stabilizer',
   geometry: { type: 'stabilizer', span: 24, housing: stabilizerHousing, wireR: 0.8 },
-  restPosition: [0, REST_Y, REST_Z],
+  restPosition: REST_SIDE,
   mountPosition: [0, Y_PCB + PCB_T, 0],
   mountRotation: [0, 0, 0],
   requires: ['bottom_foam'],
@@ -365,7 +367,7 @@ const switches: PartDef = {
   nameKo: '스위치 (리니어 45g)',
   nameEn: 'Switch',
   geometry: switchGeometry,
-  restPosition: [0, REST_Y, REST_Z],
+  restPosition: REST_SIDE,
   mountPosition: [0, Y_SWITCH, 0],
   mountRotation: [0, 0, 0],
   requires: ['plate'],
@@ -406,6 +408,7 @@ const gasket = single({
   nameKo: '가스켓 안착',
   nameEn: 'Gasket Seat',
   geometry: { type: 'gasketSet', strips: gasketStrips },
+  restPosition: [REST_SIDE[0] + 80, REST_Y, 0],
   mountPosition: [0, Y_GASKET, 0],
   mountRotation: [0, 0, 0],
   requires: ['switch'],
@@ -448,7 +451,7 @@ const keycaps: PartDef = {
   nameKo: '키캡 (PBT 이중사출)',
   nameEn: 'Keycap',
   geometry: keycapGeometry(KEY_LAYOUT[0]),
-  restPosition: [0, REST_Y, REST_Z],
+  restPosition: REST_SIDE,
   mountPosition: [0, Y_KEYCAP, 0],
   mountRotation: [0, 0, 0],
   requires: ['top_case'],

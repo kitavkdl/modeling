@@ -57,6 +57,13 @@ describe('assembly store', () => {
     expect(availableParts(useAssembly.getState().mounted).map((p) => p.id)).toEqual(['pcb'])
   })
 
+  it('records the drag drop position as the animation start', () => {
+    useAssembly.getState().mount('bottom_case', [10, 30, 20])
+    expect(useAssembly.getState().mounted.bottom_case.from).toEqual([10, 30, 20])
+    useAssembly.getState().mount('bottom_foam')
+    expect(useAssembly.getState().mounted.bottom_foam.from).toBeUndefined()
+  })
+
   it('does not double-mount', () => {
     useAssembly.getState().mount('bottom_case')
     expect(useAssembly.getState().mount('bottom_case')).toBe(false)

@@ -44,7 +44,7 @@ export function CameraRig() {
   const controls = useRef<OrbitControlsImpl>(null)
   const camera = useThree((s) => s.camera)
   const tween = useRef<Tween | null>(null)
-  const painting = useAssembly((s) => s.painting)
+  const dragging = useAssembly((s) => s.dragging)
 
   const startTween = (view: CameraView, target: THREE.Vector3) => {
     const c = controls.current
@@ -115,7 +115,7 @@ export function CameraRig() {
   return (
     <OrbitControls
       ref={controls}
-      enabled={!painting}
+      enabled={!dragging}
       enablePan={false}
       enableDamping
       dampingFactor={0.08}

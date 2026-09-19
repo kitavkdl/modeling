@@ -1,7 +1,5 @@
 import { create } from 'zustand'
-import { PARTS, PART_BY_ID, partOfInstance, type PartDef } from '../data/parts'
-
-export type MountMode = 'single' | 'paint' | 'all'
+import { PARTS, PART_BY_ID, partOfInstance, type PartDef, type Vec3 } from '../data/parts'
 
 export type Phase =
   /** 부품 장착 중 */
@@ -21,29 +19,32 @@ export interface MountRecord {
   instanceId: string
   /** performance.now() 기준 장착 시각. 장착 애니메이션에 쓴다. */
   at: number
+  /** 장착 애니메이션 출발점 (월드 mm). 드래그로 놓은 자리. 없으면 기본 규칙. */
+  from?: Vec3
 }
 
 export interface AssemblyState {
   mounted: Record<string, MountRecord>
   history: string[]
   selectedPartId: string | null
-  mode: MountMode
   phase: Phase
   /** phase가 바뀐 시각 (performance.now()). 전원 시퀀스 타이밍에 쓴다. */
   phaseAt: number
   /** 마지막 장착 시각 — 카메라 이동 트리거 */
   lastMount: { partId: string; at: number } | null
-  /** 페인팅 드래그 중 */
-  painting: boolean
+  /** 부품을 잡고 끄는 중 */
+  dragging: boolean
+  /** 드래그 중 놓으면 장착될 고스트 인스턴스 */
+  dragTarget: string | null
   /** 전부 장착 시퀀스 진행 중 */
   sequencing: boolean
 
   selectPart: (partId: string | null) => void
-  mount: (instanceId: string) => boolean
+  mount: (instanceId: string, from?: Vec3) => boolean
   mountAll: (partId: string, intervalMs?: number) => void
   undo: () => void
-  setMode: (mode: MountMode) => void
-  setPainting: (v: boolean) => void
+  setDragging: (v: boolean) => void
+  setDragTarget: (id: string | null) => void
   plugCable: () => void
   setPhase: (p: Phase) => void
   reset: () => void
@@ -94,11 +95,11 @@ export const useAssembly = create<AssemblyState>((set, get) => ({
   mounted: {},
   history: [],
   selectedPartId: nextAvailablePartId({}),
-  mode: 'paint',
   phase: 'assembly',
   phaseAt: 0,
   lastMount: null,
-  painting: false,
+  dragging: false,
+  dragTarget: null,
   sequencing: false,
 
   selectPart: (partId) => {
@@ -111,14 +112,15 @@ export const useAssembly = create<AssemblyState>((set, get) => ({
     set({ selectedPartId: partId })
   },
 
-  mount: (instanceId) => {
+  mount: (instanceId, from) => {
     const state = get()
     if (state.phase !== 'assembly') return false
     if (state.mounted[instanceId]) return false
     const part = partOfInstance(instanceId)
     if (!isPartAvailable(state.mounted, part)) return false
 
-    const mounted = { ...state.mounted, [instanceId]: { instanceId, at: now() } }
+    const record: MountRecord = from ? { instanceId, at: now(), from } : { instanceId, at: now() }
+    const mounted = { ...state.mounted, [instanceId]: record }
     const history = [...state.history, instanceId]
     const complete = isPartComplete(mounted, part)
     const allDone = isAssemblyComplete(mounted)
@@ -175,8 +177,10 @@ export const useAssembly = create<AssemblyState>((set, get) => ({
     })
   },
 
-  setMode: (mode) => set({ mode }),
-  setPainting: (painting) => set({ painting }),
+  setDragging: (dragging) => set({ dragging }),
+  setDragTarget: (dragTarget) => {
+    if (get().dragTarget !== dragTarget) set({ dragTarget })
+  },
 
   plugCable: () => {
     if (get().phase !== 'complete') return
@@ -194,7 +198,8 @@ export const useAssembly = create<AssemblyState>((set, get) => ({
       phase: 'assembly',
       phaseAt: now(),
       lastMount: null,
-      painting: false,
+      dragging: false,
+      dragTarget: null,
       sequencing: false,
     })
   },
