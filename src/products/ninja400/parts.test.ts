@@ -75,4 +75,18 @@ describe('ninja400 parts', () => {
     expect(PART_BY_ID.turn_signal.count).toBe(4)
     expect(PART_BY_ID.radiator.requires).toEqual(['chain'])
   })
+  it('bodywork is paintable primer and paint is the last, hidden, variant part', () => {
+    const last = PARTS[PARTS.length - 1]
+    expect(last.id).toBe('paint')
+    expect(last.hidden).toBe(true)
+    expect(last.variants?.map((v) => v.id)).toEqual(['krt', 'blue', 'black'])
+    const paintable = PARTS.filter((p) => p.paintable).map((p) => p.id)
+    expect(paintable).toEqual(['front_fender', 'fuel_tank', 'upper_cowl', 'side_cowl', 'lower_cowl', 'tail_cowl'])
+    expect(PARTS).toHaveLength(80)
+  })
+  it('paintRank orders paintable instances front to back', async () => {
+    const { paintRank } = await import('./parts')
+    expect(paintRank('front_fender')).toBe(0)
+    expect(paintRank('tail_cowl')).toBeGreaterThan(paintRank('fuel_tank'))
+  })
 })

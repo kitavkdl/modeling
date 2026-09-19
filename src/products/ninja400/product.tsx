@@ -2,6 +2,7 @@
 import type { ProductDef } from '../../engine/types'
 import { NINJA_MATERIALS } from './materials'
 import { PARTS, PROPS, STATIONS } from './parts'
+import { Paintable } from './render/Paintable'
 
 export const ninja400Product: ProductDef = {
   id: 'ninja400',
@@ -23,6 +24,7 @@ export const ninja400Product: ProductDef = {
   drag: { snapMm: 150, paintMm: 60, hoverMm: 150, grabMinMm: 200 },
   environment: { contactShadowSizeMm: [4200, 3200], shadowBoundsMm: 2400 },
   Finale: () => null,
+  renderInstance: (ctx) => (ctx.part.paintable ? <Paintable {...ctx} /> : null),
   hints: { complete: '키 삽입', keyed: '시동', running: '스로틀' },
   phasesAfterComplete: ['keyed', 'running'],
 }

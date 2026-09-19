@@ -3,7 +3,8 @@
 // 부품을 추가할 때는 아래 구분 주석 자리에 add({...})를 순서대로 끼워 넣는다.
 
 import type { CameraView, Geometry, PartDef, PartInstance, ProductDef, StationDef, Vec3 } from '../../engine/types'
-import { cylZ, disc, forkLeg, sprocket, tank, trellis, wheel } from './geometry'
+import { cowl, cylZ, disc, forkLeg, sprocket, tank, trellis, wheel } from './geometry'
+import { PAINT_VARIANTS } from './materials'
 import {
   CRANK,
   FORK_LEN,
@@ -297,6 +298,19 @@ add({ id: 'lever', ko: '브레이크 · 클러치 레버', en: 'Brake / Clutch L
   instances: [{ suffix: 'clutch', mount: [topX + 40, topY + 30, -230] }, { suffix: 'brake', mount: [topX + 40, topY + 30, 230] }] })
 
 // --- L~M. 외장·도색 (Task B6) --------------------------------------------------
+add({ id: 'upper_cowl', ko: '어퍼 카울', en: 'Upper Cowl', geometry: cowl([260, 260, 520], 0.7), mount: [640, 760, 0], rot: [0, 0, 0.25], material: 'primer', paintable: true, requires: ['lever'], camera: { azimuth: 25, polar: 60, distance: 3200, target: [600, 850, 0] } })
+add({ id: 'side_cowl', ko: '사이드 카울', en: 'Side Cowl', geometry: { type: 'box', size: [620, 380, 30] }, mount: [0, 0, 0], material: 'primer', paintable: true,
+  instances: [{ suffix: 'l', mount: [120, 500, -265], rot: [0, 0, 0.15] }, { suffix: 'r', mount: [120, 500, 265], rot: [0, 0, 0.15] }] })
+add({ id: 'lower_cowl', ko: '로어 카울', en: 'Lower Cowl', geometry: { type: 'box', size: [520, 220, 30] }, mount: [0, 0, 0], material: 'primer', paintable: true,
+  instances: [{ suffix: 'l', mount: [60, 250, -270] }, { suffix: 'r', mount: [60, 250, 270] }] })
+add({ id: 'windscreen', ko: '윈드스크린', en: 'Windscreen', geometry: { type: 'box', size: [12, 220, 300] }, mount: [560, 1000, 0], rot: [0, 0, 0.55], material: 'glass', small: true })
+add({ id: 'tail_cowl', ko: '테일 카울', en: 'Tail Cowl', geometry: cowl([520, 160, 280], 0.6), mount: [-620, 760, 0], material: 'primer', paintable: true, camera: { azimuth: -150, polar: 60, distance: 3200, target: [-600, 800, 0] } })
+add({ id: 'rear_hugger', ko: '리어 허거', en: 'Rear Hugger', geometry: { type: 'frustum', bottom: [360, 170], top: [300, 160], h: 30 }, mount: [-685, 640, 0], material: 'plastic_black', small: true })
+add({ id: 'rider_seat', ko: '라이더 시트', en: 'Rider Seat', geometry: { type: 'roundedBox', size: [360, 60, 260], radius: 20 }, mount: [-330, 740, 0], material: 'plastic_black' })
+add({ id: 'passenger_seat', ko: '동승자 시트', en: 'Passenger Seat', geometry: { type: 'roundedBox', size: [260, 50, 220], radius: 18 }, mount: [-680, 820, 0], material: 'plastic_black' })
+add({ id: 'mirror', ko: '미러', en: 'Mirror', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 7, radiusBottom: 7, height: 140, segments: 8 }, rotation: [0.6, 0, 0] }, { geometry: { type: 'box', size: [30, 80, 130] }, position: [0, 120, 80] }] }, mount: [0, 0, 0], material: 'plastic_black', small: true,
+  instances: [{ suffix: 'l', mount: [600, 1000, -200], rot: [0, Math.PI, 0] }, { suffix: 'r', mount: [600, 1000, 200] }] })
+add({ id: 'paint', ko: '도색', en: 'Paint', geometry: { type: 'box', size: [10, 10, 10] }, mount: [0, 0, 0], material: 'primer', hidden: true, variants: PAINT_VARIANTS, hint: '도색', camera: { azimuth: 30, polar: 62, distance: 4000, target: [0, 600, 0] } })
 
 // 빌드 ---------------------------------------------------------------------
 function build(): PartDef[] {
@@ -344,3 +358,9 @@ function build(): PartDef[] {
 /** 조립 순서 = 배열 순서 */
 export const PARTS: PartDef[] = build()
 export const PART_BY_ID: Record<string, PartDef> = Object.fromEntries(PARTS.map((p) => [p.id, p]))
+
+/** 도색 순서: paintable 인스턴스를 x 내림차순(앞→뒤)으로. 0부터 */
+export function paintRank(instanceId: string): number {
+  const list = PARTS.filter((p) => p.paintable).flatMap((p) => p.instances).sort((a, b) => b.mountPosition[0] - a.mountPosition[0])
+  return Math.max(0, list.findIndex((i) => i.id === instanceId))
+}
