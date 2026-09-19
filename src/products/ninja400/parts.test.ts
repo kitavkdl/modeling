@@ -60,4 +60,13 @@ describe('ninja400 parts', () => {
     expect(PART_BY_ID.valve.count).toBe(8)
     expect(PART_BY_ID.piston.count).toBe(2)
   })
+  it('wheel stations marry with axles that also require the fork / swingarm', () => {
+    expect(PART_BY_ID.front_axle.marries).toBe('front_wheel')
+    expect(PART_BY_ID.front_axle.requires).toEqual(['front_disc', 'fork'])
+    expect(PART_BY_ID.rear_axle.marries).toBe('rear_wheel')
+    expect(PART_BY_ID.rear_axle.requires).toEqual(['rear_sprocket', 'swingarm'])
+    expect(PART_BY_ID.chain.requires).toEqual(['rear_axle', 'drive_sprocket'])
+    expect(PART_BY_ID.fork.count).toBe(2)
+    expect(PART_BY_ID.front_wheel.mountPosition).toEqual([685, 293, 0])
+  })
 })

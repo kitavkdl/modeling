@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { useAssembly, useProduct } from '../context'
 import { isPartAvailable, isPartComplete, mountedCount } from '../store'
 
@@ -10,8 +11,16 @@ export function Tray() {
   const selectPart = useAssembly((s) => s.selectPart)
   const phase = useAssembly((s) => s.phase)
   const locked = phase !== 'assembly'
+  const selectedRef = useRef<HTMLButtonElement | null>(null)
 
   const cols = parts.length <= 10 ? parts.length : 10
+
+  useEffect(() => {
+    const el = selectedRef.current
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ inline: 'center', block: 'nearest' })
+    }
+  }, [selectedPartId])
 
   return (
     <div
@@ -19,7 +28,7 @@ export function Tray() {
       style={
         parts.length <= 10
           ? { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }
-          : { gridAutoFlow: 'column', gridAutoColumns: 'minmax(120px, 1fr)', overflowX: 'auto' }
+          : { gridTemplateColumns: 'none', gridAutoFlow: 'column', gridAutoColumns: 'minmax(120px, 1fr)', overflowX: 'auto' }
       }
     >
       {parts.map((p, i) => {
@@ -33,6 +42,7 @@ export function Tray() {
         return (
           <button
             key={p.id}
+            ref={selected ? selectedRef : undefined}
             className={cls}
             disabled={!available}
             onClick={() => selectPart(selected ? null : p.id)}

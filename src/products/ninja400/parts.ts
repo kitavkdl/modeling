@@ -3,8 +3,24 @@
 // 부품을 추가할 때는 아래 구분 주석 자리에 add({...})를 순서대로 끼워 넣는다.
 
 import type { CameraView, Geometry, PartDef, PartInstance, ProductDef, StationDef, Vec3 } from '../../engine/types'
-import { cylZ, sprocket, trellis } from './geometry'
-import { CRANK, HEAD, TILT_ROT, tilt } from './spec'
+import { cylZ, disc, forkLeg, sprocket, trellis, wheel } from './geometry'
+import {
+  CRANK,
+  FORK_LEN,
+  FORK_ROT,
+  FORK_SPACING,
+  FRONT_AXLE,
+  FRONT_TIRE_R,
+  FRONT_TIRE_W,
+  HEAD,
+  REAR_AXLE,
+  REAR_TIRE_R,
+  REAR_TIRE_W,
+  RIM_R,
+  TILT_ROT,
+  forkPoint,
+  tilt,
+} from './spec'
 
 // 작업대 --------------------------------------------------------------------
 // 엔진 스탠드 상판은 y=270..280 이고 크랭크케이스 하부 밑면이 y=280 이라 딱 얹힌다.
@@ -213,6 +229,41 @@ add({ id: 'engine_mount_bolt', ko: '엔진 마운트 볼트', en: 'Engine Mount 
   instances: [ { suffix: 'fl', mount: [80, 560, -170] }, { suffix: 'fr', mount: [80, 560, 170] }, { suffix: 'rl', mount: [-420, 420, -180] }, { suffix: 'rr', mount: [-420, 420, 180] } ] })
 
 // --- C~F. 서스펜션·프런트엔드·바퀴 (Task B4) ---------------------------------
+const FW = 'front_wheel', RW = 'rear_wheel'
+add({ id: 'swingarm', ko: '스윙암', en: 'Swingarm', geometry: { type: 'composite', children: [
+  { geometry: { type: 'box', size: [300, 60, 40] }, position: [-150, 0, -130], rotation: [0, 0, 0.12] }, { geometry: { type: 'box', size: [300, 60, 40] }, position: [-150, 0, 130], rotation: [0, 0, 0.12] },
+  { geometry: { type: 'box', size: [60, 60, 300] }, position: [-30, 0, -150] }, { geometry: cylZ(20, 320), position: [0, 30, 0] } ] },
+  mount: [-420, 400, 0], material: 'cast_alu', requires: ['engine_mount_bolt'] })
+add({ id: 'rear_shock', ko: '리어 쇼크', en: 'Rear Shock', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 22, radiusBottom: 22, height: 180, segments: 16 } }, { geometry: { type: 'cylinder', radiusTop: 8, radiusBottom: 8, height: 110, segments: 10 }, position: [0, 180, 0] }, ...[0, 1, 2, 3, 4, 5].map((i) => ({ geometry: { type: 'torus', radius: 34, tube: 5 } as Geometry, position: [0, 20 + i * 28, 0] as Vec3 }))] },
+  mount: [-470, 380, 0], rot: [0, 0, 0.35], material: 'steel', small: true })
+add({ id: 'shock_linkage', ko: '쇼크 링크', en: 'Shock Linkage', geometry: { type: 'composite', children: [{ geometry: { type: 'box', size: [120, 24, 20] }, position: [0, 0, -30] }, { geometry: { type: 'box', size: [120, 24, 20] }, position: [0, 0, 30] }, { geometry: { type: 'box', size: [60, 20, 80] }, position: [-60, 0, 0] }] }, mount: [-500, 330, 0], material: 'cast_alu', small: true })
+const [stemX, stemY] = forkPoint(760)
+add({ id: 'steering_stem', ko: '스티어링 스템 · 하부 트리플 클램프', en: 'Steering Stem / Lower Triple Clamp', geometry: { type: 'composite', children: [{ geometry: { type: 'box', size: [80, 40, 240] } }, { geometry: { type: 'cylinder', radiusTop: 16, radiusBottom: 16, height: 150, segments: 12 }, position: [0, 40, 0] }] },
+  mount: [stemX, stemY, 0], rot: FORK_ROT, material: 'cast_alu', small: true, camera: { azimuth: 40, polar: 60, distance: 2600, target: [500, 700, 0] } })
+add({ id: 'fork', ko: '프런트 포크', en: 'Front Fork', geometry: forkLeg(FORK_LEN, 20.5, 27, 300), mount: FRONT_AXLE, rot: FORK_ROT, material: 'polished_alu',
+  instances: [{ suffix: 'l', mount: [FRONT_AXLE[0], FRONT_AXLE[1], -FORK_SPACING / 2] }, { suffix: 'r', mount: [FRONT_AXLE[0], FRONT_AXLE[1], FORK_SPACING / 2] }],
+  camera: { azimuth: 40, polar: 60, distance: 2600, target: [560, 600, 0] } })
+const [topX, topY] = forkPoint(880)
+add({ id: 'top_clamp', ko: '상부 트리플 클램프', en: 'Upper Triple Clamp', geometry: { type: 'box', size: [70, 30, 260] }, mount: [topX, topY, 0], rot: FORK_ROT, material: 'cast_alu', small: true, camera: { azimuth: 40, polar: 55, distance: 2200, target: [430, 850, 0] } })
+add({ id: 'clip_on', ko: '클립온 핸들', en: 'Clip-on Handlebar', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 11, radiusBottom: 11, height: 230, segments: 12 }, rotation: [Math.PI / 2, 0, 0], position: [0, 0, 0] }, { geometry: { type: 'cylinder', radiusTop: 16, radiusBottom: 16, height: 120, segments: 12 }, rotation: [Math.PI / 2, 0, 0], position: [0, 0, 110], material: 'rubber' }] },
+  mount: [topX - 20, topY + 20, 0], material: 'polished_alu', small: true, camera: { azimuth: 20, polar: 50, distance: 2200, target: [430, 900, 0] },
+  instances: [{ suffix: 'l', mount: [topX - 20, topY + 20, -110], rot: [0, Math.PI, 0] }, { suffix: 'r', mount: [topX - 20, topY + 20, 110], rot: [0, 0, 0] }] })
+// (오른쪽 클립온의 원통은 +z로 뻗고 왼쪽은 y축 180도 회전으로 -z로 뻗는다. 그립은 원통 끝 110~230 구간.)
+add({ id: 'front_wheel', ko: '앞 휠 · 타이어', en: 'Front Wheel', geometry: wheel(FRONT_TIRE_R, FRONT_TIRE_W, RIM_R), mount: FRONT_AXLE, material: 'polished_alu', station: FW, requires: ['clip_on'] })
+add({ id: 'front_disc', ko: '앞 브레이크 디스크', en: 'Front Brake Disc', geometry: disc(155, 5), mount: [FRONT_AXLE[0], FRONT_AXLE[1], -62], material: 'stainless', station: FW })
+add({ id: 'front_axle', ko: '앞 액슬', en: 'Front Axle', geometry: { type: 'composite', children: [{ geometry: cylZ(9, 240) }, { geometry: cylZ(16, 10), position: [0, 0, 120] }] }, mount: FRONT_AXLE, material: 'steel', marries: FW, requires: ['front_disc', 'fork'], small: true, hint: '앞 액슬 체결', camera: { azimuth: 40, polar: 62, distance: 2400, target: [685, 400, 0] } })
+add({ id: 'front_caliper', ko: '프런트 캘리퍼', en: 'Front Brake Caliper', geometry: { type: 'box', size: [90, 60, 40] }, mount: [FRONT_AXLE[0] + 40, FRONT_AXLE[1] + 120, -78], material: 'cast_alu', small: true })
+add({ id: 'front_fender', ko: '프런트 펜더', en: 'Front Fender', geometry: { type: 'composite', children: [{ geometry: { type: 'frustum', bottom: [420, 130], top: [300, 120], h: 40 } }] }, mount: [FRONT_AXLE[0], FRONT_AXLE[1] + 300, 0], material: 'primer', paintable: true })
+add({ id: 'rear_wheel', ko: '뒤 휠 · 타이어', en: 'Rear Wheel', geometry: wheel(REAR_TIRE_R, REAR_TIRE_W, RIM_R), mount: REAR_AXLE, material: 'polished_alu', station: RW })
+add({ id: 'rear_disc', ko: '리어 브레이크 디스크', en: 'Rear Brake Disc', geometry: disc(110, 5), mount: [REAR_AXLE[0], REAR_AXLE[1], 80], material: 'stainless', station: RW })
+add({ id: 'rear_sprocket', ko: '리어 스프로킷', en: 'Rear Sprocket', geometry: sprocket(118, 7, 41), mount: [REAR_AXLE[0], REAR_AXLE[1], -84], material: 'steel', station: RW })
+add({ id: 'rear_axle', ko: '뒤 액슬', en: 'Rear Axle', geometry: { type: 'composite', children: [{ geometry: cylZ(10, 300) }, { geometry: cylZ(17, 10), position: [0, 0, 150] }] }, mount: REAR_AXLE, material: 'steel', marries: RW, requires: ['rear_sprocket', 'swingarm'], small: true, hint: '뒤 액슬 체결', camera: { azimuth: -40, polar: 62, distance: 2400, target: [-685, 400, 0] } })
+add({ id: 'rear_caliper', ko: '리어 캘리퍼', en: 'Rear Brake Caliper', geometry: { type: 'box', size: [70, 50, 36] }, mount: [REAR_AXLE[0] - 20, REAR_AXLE[1] + 80, 100], material: 'cast_alu', small: true })
+add({ id: 'chain', ko: '체인', en: 'Drive Chain', geometry: { type: 'composite', children: [
+  { geometry: { type: 'box', size: [500, 10, 8] }, position: [-250, 100, 0], rotation: [0, 0, 0.08] }, { geometry: { type: 'box', size: [500, 10, 8] }, position: [-250, -100, 0], rotation: [0, 0, -0.08] },
+  { geometry: { type: 'torus', radius: 118, tube: 5 }, position: [-500, -5, 0], rotation: [Math.PI / 2, 0, 0] }, { geometry: { type: 'torus', radius: 40, tube: 5 }, position: [0, -5, 0], rotation: [Math.PI / 2, 0, 0] } ] },
+  mount: [cx - 190, cy - 60, -205], material: 'chain', requires: ['rear_axle', 'drive_sprocket'], small: true, camera: { azimuth: -60, polar: 62, distance: 2600, target: [-400, 400, 0] } })
+
 // --- G~K. 냉각·전장·흡기·배기·조작계 (Task B5) --------------------------------
 // --- L~M. 외장·도색 (Task B6) --------------------------------------------------
 
