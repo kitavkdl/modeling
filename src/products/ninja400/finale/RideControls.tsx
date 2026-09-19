@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { useAssembly } from '../../../engine/context'
 import * as engineSound from '../audio/engineSound'
-import { shiftDown, shiftUp, stepRide } from './rideModel'
+import { rideLoad, shiftDown, shiftUp, stepRide } from './rideModel'
 import { notifyRide, ride, rideInput } from './rideState'
 
 // 키보드 주행 조작. 그리는 것은 없고 window 이벤트와 매 프레임 계산만 맡는다.
@@ -61,6 +61,7 @@ export function RideControls() {
           }
           ride.gear = e.code === 'ArrowRight' ? shiftUp(ride.gear) : shiftDown(ride.gear)
           ride.shiftKick = 1
+          engineSound.blip()
           return
         }
         default:
@@ -110,8 +111,9 @@ export function RideControls() {
       const left = Math.abs(ride.shiftKick) - dt / KICK_S
       ride.shiftKick = left <= 0 ? 0 : Math.sign(ride.shiftKick) * left
     }
-    // Task 7에서 setRpm/setLoad가 생기면 여기서 같이 넘긴다.
+    engineSound.setRpm(ride.stalled ? 0 : ride.rpm)
     engineSound.setThrottle(ride.stalled ? 0 : ride.throttle)
+    engineSound.setLoad(ride.stalled ? 0 : rideLoad(ride))
     if (!wasStalled && ride.stalled) {
       engineSound.stop()
       notifyRide()

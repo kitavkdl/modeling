@@ -49,6 +49,9 @@ export const shiftDown = (g: number) => (g === 0 ? 1 : g === 2 ? 0 : g === 1 ? 1
 /** 기어비(엔진 회전 / 바퀴 회전). N이면 Infinity */
 export const gearRatio = (gear: number) => (gear === 0 ? Infinity : PRIMARY * GEAR_RATIOS[gear] * FINAL)
 
+/** 물린 기어가 엔진에 거는 부하 0~1. 중립이거나 클러치를 다 잡으면 0 */
+export const rideLoad = (s: Pick<RideSim, 'gear' | 'clutch'>) => (s.gear === 0 ? 0 : (1 - s.clutch) * 0.6)
+
 /** 1차 시정수 응답 */
 const approach = (v: number, target: number, tau: number, dt: number) => v + (target - v) * (1 - Math.exp(-dt / tau))
 
@@ -62,7 +65,7 @@ export function stepRide(s: RideSim, input: RideInputs, dt: number): RideSim {
   /** 0 = 완전히 잡음, 1 = 완전히 풀림 */
   const clutchOpen = 1 - clutch
   const engaged = inGear ? clutchOpen : 0
-  const load = engaged * 0.6
+  const load = rideLoad({ gear: s.gear, clutch })
 
   let rpm = s.rpm
   let stalled = s.stalled
