@@ -162,6 +162,8 @@ export interface ProductDef {
   environment: EnvironmentConfig
   /** 조립 완료 후 연출과 상호작용. Canvas 안에서 렌더된다 */
   Finale: ComponentType
+  /** HUD 우하단에 제품이 그리는 DOM(계기 등) */
+  hudExtra?: ComponentType
   /** 기본 지오메트리 대신 렌더할 인스턴스. null이면 기본 */
   renderInstance?: (ctx: RenderInstanceCtx) => ReactNode | null
   /** 단계별 안내 문구. assembly는 선택 부품의 hint를 쓴다 */

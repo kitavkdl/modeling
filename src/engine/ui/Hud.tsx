@@ -1,7 +1,14 @@
 import { useEffect } from 'react'
 import { useAssembly, useProduct } from '../context'
-import { isPartComplete } from '../store'
+import { canSkip, isPartComplete } from '../store'
 import { VariantPicker } from './VariantPicker'
+
+const FOCUSED_INPUT_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT'])
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  return FOCUSED_INPUT_TAGS.has(target.tagName) || target.isContentEditable
+}
 
 function useHint(): string {
   const product = useProduct()
@@ -22,25 +29,36 @@ export function Hud({ onBack }: { onBack: () => void }) {
   const reset = useAssembly((s) => s.reset)
   const history = useAssembly((s) => s.history)
   const selectedPartId = useAssembly((s) => s.selectedPartId)
-  const mountAll = useAssembly((s) => s.mountAll)
-  const sequencing = useAssembly((s) => s.sequencing)
+  const skipCurrent = useAssembly((s) => s.skipCurrent)
+  const advancePhase = useAssembly((s) => s.advancePhase)
+  const skippable = useAssembly((s) => canSkip(s))
   const hint = useHint()
 
   const doneCount = product.parts.filter((p) => isPartComplete(mounted, p)).length
   const canUndo = history.length > 0 && (phase === 'assembly' || phase === 'complete')
   const selected = selectedPartId ? product.parts.find((p) => p.id === selectedPartId) ?? null : null
-  const showMountAll = selected && selected.count > 1 && !selected.variants
+
+  const seq = product.phasesAfterComplete
+  const lastPhase = seq[seq.length - 1]
+  // assembly에서는 부품 건너뛰기, complete 및 그 뒤 단계(마지막 단계 제외)에서는 단계 건너뛰기
+  const phaseSkippable = phase !== 'assembly' && phase !== lastPhase
+  const onSkip = () => (phase === 'assembly' ? skipCurrent() : advancePhase())
+  const showSkip = phase === 'assembly' ? skippable : phaseSkippable
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if (isTypingTarget(e.target)) return
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         undo()
+      } else if (e.key === 'Enter' && showSkip) {
+        e.preventDefault()
+        onSkip()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [undo])
+  }, [undo, showSkip, onSkip])
 
   return (
     <>
@@ -72,12 +90,16 @@ export function Hud({ onBack }: { onBack: () => void }) {
         <span className="hint-text">{hint}</span>
         {selected && selected.variants ? (
           <VariantPicker part={selected} />
-        ) : showMountAll ? (
-          <button className="btn" disabled={sequencing} onClick={() => mountAll(selected.id)}>
-            전부 장착
-          </button>
+        ) : showSkip ? (
+          <button className="btn" onClick={onSkip} title="Enter">건너뛰기</button>
         ) : null}
       </div>
+
+      {product.hudExtra ? (
+        <div className="hud hud-extra">
+          <product.hudExtra />
+        </div>
+      ) : null}
     </>
   )
 }
