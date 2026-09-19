@@ -140,6 +140,7 @@ export function start(): void {
   master.gain.cancelScheduledValues(ac.currentTime)
   master.gain.setValueAtTime(MASTER_GAIN, ac.currentTime)
   if (timer !== null) return
+  level = 0
   cursor = ac.currentTime
   tick()
   timer = setInterval(tick, TICK_MS)
@@ -150,8 +151,9 @@ export function setThrottle(t: number): void {
   level = clamp01(t)
 }
 
-/** 정지. 예약을 끊고 마스터를 0.15초에 걸쳐 내린다. */
+/** 정지. 예약을 끊고 마스터를 0.15초에 걸쳐 내린다. 스로틀도 아이들로 되돌린다. */
 export function stop(): void {
+  level = 0
   if (timer !== null) {
     clearInterval(timer)
     timer = null

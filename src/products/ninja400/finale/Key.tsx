@@ -9,11 +9,11 @@ import { MM, type Vec3 } from '../../../engine/types'
 // 조립이 끝나면 계기판 앞에 키가 떠 있다. 잡아서 키실린더에 놓으면 keyed 단계로 넘어간다.
 // 드래그는 engine/scene/DraggablePart.tsx와 같은 방식 — 윈도우 pointermove/pointerup + 평면 교차.
 
-/** 떠 있는 자리 (mm) */
-const REST: Vec3 = [560, 1080, 120]
+/** 떠 있는 자리 (mm). 키실린더에서 수평으로 SNAP_MM 밖에 둔다 — 제자리 클릭으로 꽂히면 안 된다 */
+const REST: Vec3 = [560, 1080, 280]
 /** 키실린더 (mm) */
 const CYLINDER: Vec3 = [540, 980, 60]
-/** 꽂힘 판정 반경 (mm) */
+/** 꽂힘 판정 반경 (mm). 엔진 dragMath와 같이 수평 거리만 본다 */
 const SNAP_MM = 150
 /** 잡고 끄는 평면 높이 (mm) */
 const HOVER_Y = 1080
@@ -43,6 +43,8 @@ function KeyBody() {
   const group = useRef<THREE.Group>(null)
   const drag = useRef<DragState | null>(null)
   const returning = useRef<{ from: THREE.Vector3; start: number } | null>(null)
+  /** 실제로 끌었는가. 누르기만 한 것은 꽂힌 것으로 치지 않는다 */
+  const moved = useRef(false)
   const raycaster = useRef(new THREE.Raycaster()).current
   const ndc = useRef(new THREE.Vector2()).current
   const tmp = useRef(new THREE.Vector3()).current
@@ -61,9 +63,8 @@ function KeyBody() {
     release()
     if (!d) return
     const x = d.target.x / MM
-    const y = d.target.y / MM
     const z = d.target.z / MM
-    const near = Math.hypot(x - CYLINDER[0], y - CYLINDER[1], z - CYLINDER[2]) <= SNAP_MM
+    const near = moved.current && Math.hypot(x - CYLINDER[0], z - CYLINDER[2]) <= SNAP_MM
     if (near) {
       store.getState().advancePhase()
       return
@@ -79,7 +80,10 @@ function KeyBody() {
       const rect = gl.domElement.getBoundingClientRect()
       ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1)
       raycaster.setFromCamera(ndc, camera)
-      if (raycaster.ray.intersectPlane(d.plane, tmp)) d.target.set(tmp.x + d.offset.x, hoverY, tmp.z + d.offset.z)
+      if (raycaster.ray.intersectPlane(d.plane, tmp)) {
+        d.target.set(tmp.x + d.offset.x, hoverY, tmp.z + d.offset.z)
+        moved.current = true
+      }
     }
     const upHandler = () => {
       if (drag.current) endDrag()
@@ -105,6 +109,7 @@ function KeyBody() {
       setControlsEnabled(false)
       cancelCameraTween()
       returning.current = null
+      moved.current = false
       const plane = new THREE.Plane(up, -hoverY)
       raycaster.setFromCamera(e.pointer, camera)
       const hit = new THREE.Vector3()

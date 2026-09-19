@@ -3,11 +3,11 @@ import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import type * as THREE from 'three'
 import { useAssembly, useMaterials } from '../../../engine/context'
 import { clamp01 } from '../../../engine/easing'
-import { setControlsEnabled } from '../../../engine/scene/controlsRef'
+import { cancelCameraTween, setControlsEnabled } from '../../../engine/scene/controlsRef'
 import { MM, type Vec3 } from '../../../engine/types'
 import * as engineSound from '../audio/engineSound'
 import { forkPoint, HEAD } from '../spec'
-import { throttle } from './throttleState'
+import { resetThrottle, throttle } from './throttleState'
 
 // 우측 그립. 누른 채 화면 위로 끌면 스로틀이 열린다.
 // clip_on:r 인스턴스는 z=110에 있고 고무 그립은 그 안에서 110~230 구간이므로 월드 중심은 z=280이다.
@@ -16,6 +16,8 @@ const [topX, topY] = forkPoint(HEAD[1])
 /** 그립 중심 (mm) */
 const GRIP: Vec3 = [topX - 20, topY + 20, 280]
 const GRIP_LEN = 120
+/** 슬리브는 clip_on 고무 그립보다 2mm 짧게 — 끝면이 겹쳐 z-파이팅하지 않도록 */
+const SLEEVE_LEN = 118
 const GRIP_R = 17
 /** 전개까지 끌어야 하는 화면 거리 (px) */
 const DRAG_RANGE_PX = 200
@@ -55,6 +57,7 @@ export function Throttle() {
       window.removeEventListener('pointerup', upHandler)
       window.removeEventListener('pointercancel', upHandler)
       if (startY.current !== null) release()
+      resetThrottle()
     }
   }, [running, release])
 
@@ -63,13 +66,15 @@ export function Throttle() {
     throttle.value += (throttle.target - throttle.value) * (1 - Math.exp(-dt / TAU))
     engineSound.setThrottle(throttle.value)
     const g = grip.current
-    if (g) g.rotation.z = -throttle.value * MAX_TWIST
+    // +x가 앞이므로 양의 회전이 그립 윗면을 라이더 쪽(뒤)으로 굴린다
+    if (g) g.rotation.z = throttle.value * MAX_TWIST
   })
 
   const onPointerDown = useCallback((e: ThreeEvent<PointerEvent>) => {
     if (e.button !== 0 || startY.current !== null) return
     e.stopPropagation()
     setControlsEnabled(false)
+    cancelCameraTween()
     startY.current = e.clientY
     document.body.style.cursor = 'grabbing'
   }, [])
@@ -81,11 +86,11 @@ export function Throttle() {
     <group position={[GRIP[0] * MM, GRIP[1] * MM, GRIP[2] * MM]}>
       <group ref={grip}>
         <mesh material={rubber} rotation={[Math.PI / 2, 0, 0]} castShadow>
-          <cylinderGeometry args={[GRIP_R * MM, GRIP_R * MM, GRIP_LEN * MM, 16]} />
+          <cylinderGeometry args={[GRIP_R * MM, GRIP_R * MM, SLEEVE_LEN * MM, 16]} />
         </mesh>
         {/* 비틀림이 보이도록 얹은 리브 */}
         <mesh material={rubber} position={[0, (GRIP_R + 1) * MM, 0]} castShadow>
-          <boxGeometry args={[5 * MM, 4 * MM, (GRIP_LEN - 10) * MM]} />
+          <boxGeometry args={[5 * MM, 4 * MM, (SLEEVE_LEN - 10) * MM]} />
         </mesh>
       </group>
       {/* 잡기 영역 */}
