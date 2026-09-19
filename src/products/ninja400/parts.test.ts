@@ -49,4 +49,15 @@ describe('ninja400 parts', () => {
     expect(FRONT_AXLE[0] - REAR_AXLE[0]).toBe(WHEELBASE)
     expect(PART_BY_ID.main_frame.mountPosition[1]).toBeGreaterThan(0)
   })
+  it('engine station has 27 parts and the mount bolts marry it after all of them', () => {
+    const engine = PARTS.filter((p) => p.station === 'engine')
+    expect(engine).toHaveLength(27)
+    expect(engine[0].id).toBe('crankcase_lower')
+    const bolts = PART_BY_ID.engine_mount_bolt
+    expect(bolts.marries).toBe('engine')
+    expect(bolts.count).toBe(4)
+    expect(bolts.requires).toEqual(['drive_sprocket', 'subframe'])
+    expect(PART_BY_ID.valve.count).toBe(8)
+    expect(PART_BY_ID.piston.count).toBe(2)
+  })
 })

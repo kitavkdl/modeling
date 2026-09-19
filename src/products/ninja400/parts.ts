@@ -3,8 +3,8 @@
 // 부품을 추가할 때는 아래 구분 주석 자리에 add({...})를 순서대로 끼워 넣는다.
 
 import type { CameraView, Geometry, PartDef, PartInstance, ProductDef, StationDef, Vec3 } from '../../engine/types'
-import { trellis } from './geometry'
-import { HEAD } from './spec'
+import { cylZ, sprocket, trellis } from './geometry'
+import { CRANK, HEAD, TILT_ROT, tilt } from './spec'
 
 // 작업대 --------------------------------------------------------------------
 // 엔진 스탠드 상판은 y=270..280 이고 크랭크케이스 하부 밑면이 y=280 이라 딱 얹힌다.
@@ -167,6 +167,51 @@ add({
 })
 
 // --- B. 엔진 작업대 (Task B3) --------------------------------------------------
+const E = 'engine'
+const cx = CRANK[0], cy = CRANK[1]
+add({ id: 'crankcase_lower', ko: '크랭크케이스 하부', en: 'Lower Crankcase', geometry: { type: 'box', size: [420, 150, 380] }, mount: [cx, cy - 150, 0], material: 'cast_alu', station: E, requires: ['subframe'] })
+add({ id: 'crankshaft', ko: '크랭크축', en: 'Crankshaft', geometry: { type: 'composite', children: [
+  { geometry: cylZ(22, 360) }, { geometry: cylZ(60, 40), position: [0, 0, -60] }, { geometry: cylZ(60, 40), position: [0, 0, 60] },
+  { geometry: { type: 'box', size: [30, 26, 50] }, position: [0, 26, -42] }, { geometry: { type: 'box', size: [30, 26, 50] }, position: [0, -26, 42] } ] },
+  mount: [cx, cy, 0], material: 'steel', station: E, small: true })
+add({ id: 'balancer', ko: '밸런서 샤프트', en: 'Balancer Shaft', geometry: cylZ(16, 340), mount: [cx + 110, cy + 20, 0], material: 'steel', station: E, small: true })
+add({ id: 'input_shaft', ko: '변속기 입력축', en: 'Transmission Input Shaft', geometry: { type: 'composite', children: [{ geometry: cylZ(14, 330) }, { geometry: cylZ(34, 24), position: [0, 0, -100] }, { geometry: cylZ(40, 24), position: [0, 0, -40] }, { geometry: cylZ(30, 24), position: [0, 0, 30] }, { geometry: cylZ(36, 24), position: [0, 0, 100] }] }, mount: [cx - 120, cy - 10, 0], material: 'steel', station: E, small: true })
+add({ id: 'output_shaft', ko: '변속기 출력축', en: 'Transmission Output Shaft', geometry: { type: 'composite', children: [{ geometry: cylZ(14, 360) }, { geometry: cylZ(38, 24), position: [0, 0, -100] }, { geometry: cylZ(32, 24), position: [0, 0, -40] }, { geometry: cylZ(42, 24), position: [0, 0, 30] }, { geometry: cylZ(36, 24), position: [0, 0, 100] }] }, mount: [cx - 190, cy - 60, 0], material: 'steel', station: E, small: true })
+add({ id: 'shift_drum', ko: '시프트 드럼', en: 'Shift Drum', geometry: cylZ(20, 200), mount: [cx - 160, cy + 40, 0], material: 'steel', station: E, small: true })
+add({ id: 'crankcase_upper', ko: '크랭크케이스 상부', en: 'Upper Crankcase', geometry: { type: 'box', size: [420, 120, 380] }, mount: [cx, cy, 0], material: 'cast_alu', station: E })
+add({ id: 'conrod', ko: '커넥팅로드', en: 'Connecting Rod', geometry: { type: 'box', size: [22, 110, 14] }, mount: tilt(0, 26, 0), rot: TILT_ROT, material: 'steel', station: E, small: true,
+  instances: [{ suffix: 'l', mount: tilt(0, 26, -42) }, { suffix: 'r', mount: tilt(0, 26, 42) }] })
+add({ id: 'piston', ko: '피스톤', en: 'Piston', geometry: { type: 'cylinder', radiusTop: 35, radiusBottom: 35, height: 44, segments: 24 }, mount: tilt(0, 136, 0), rot: TILT_ROT, material: 'polished_alu', station: E, small: true,
+  instances: [{ suffix: 'l', mount: tilt(0, 136, -42) }, { suffix: 'r', mount: tilt(0, 136, 42) }] })
+add({ id: 'cylinder_block', ko: '실린더 블록', en: 'Cylinder Block', geometry: { type: 'box', size: [200, 130, 240] }, mount: tilt(0, 120, 0), rot: TILT_ROT, material: 'cast_alu', station: E })
+add({ id: 'cylinder_head', ko: '실린더 헤드', en: 'Cylinder Head', geometry: { type: 'box', size: [230, 90, 250] }, mount: tilt(0, 250, 0), rot: TILT_ROT, material: 'cast_alu', station: E })
+add({ id: 'valve', ko: '밸브', en: 'Valve', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 3, radiusBottom: 3, height: 70, segments: 8 } }, { geometry: { type: 'cylinder', radiusTop: 13, radiusBottom: 13, height: 3, segments: 16 } }] },
+  mount: tilt(0, 270, 0), rot: TILT_ROT, material: 'stainless', station: E, small: true,
+  instances: [-56, -28, 28, 56].flatMap((z) => [{ suffix: `in${z}`, mount: tilt(-15, 270, z) }, { suffix: `ex${z}`, mount: tilt(15, 270, z) }]) })
+add({ id: 'camshaft', ko: '캠샤프트', en: 'Camshaft', geometry: { type: 'composite', children: [{ geometry: cylZ(11, 260) }, ...[-70, -14, 14, 70].map((z) => ({ geometry: cylZ(18, 12), position: [0, 0, z] as Vec3 }))] },
+  mount: tilt(0, 330, 0), rot: TILT_ROT, material: 'steel', station: E, small: true,
+  instances: [{ suffix: 'intake', mount: tilt(-28, 330, 0) }, { suffix: 'exhaust', mount: tilt(28, 330, 0) }] })
+add({ id: 'cam_chain', ko: '캠체인', en: 'Cam Chain', geometry: { type: 'box', size: [14, 330, 6] }, mount: tilt(0, 0, 128), rot: TILT_ROT, material: 'chain', station: E, small: true })
+add({ id: 'cam_tensioner', ko: '캠체인 텐셔너', en: 'Cam Chain Tensioner', geometry: { type: 'box', size: [30, 60, 40] }, mount: tilt(-60, 200, 128), rot: TILT_ROT, material: 'cast_alu', station: E, small: true })
+add({ id: 'cam_cover', ko: '캠 커버', en: 'Cam Cover', geometry: { type: 'roundedBox', size: [230, 50, 250], radius: 8 }, mount: tilt(0, 340, 0), rot: TILT_ROT, material: 'cast_alu', station: E })
+add({ id: 'spark_plug', ko: '점화플러그', en: 'Spark Plug', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 8, radiusBottom: 8, height: 40, segments: 10 } }, { geometry: { type: 'cylinder', radiusTop: 6, radiusBottom: 6, height: 30, segments: 10 }, position: [0, 40, 0], material: 'plastic_black' }] },
+  mount: tilt(0, 390, 0), rot: TILT_ROT, material: 'stainless', station: E, small: true,
+  instances: [{ suffix: 'l', mount: tilt(0, 390, -42) }, { suffix: 'r', mount: tilt(0, 390, 42) }] })
+add({ id: 'clutch_pack', ko: '클러치 팩', en: 'Clutch Pack', geometry: cylZ(75, 60), mount: [cx - 120, cy - 10, 200], material: 'steel', station: E, small: true })
+add({ id: 'clutch_cover', ko: '클러치 커버', en: 'Clutch Cover', geometry: { type: 'composite', children: [{ geometry: cylZ(105, 30) }, { geometry: cylZ(60, 20), position: [0, 0, 25] }] }, mount: [cx - 120, cy - 10, 205], material: 'polished_alu', station: E })
+add({ id: 'generator_rotor', ko: '제너레이터 로터', en: 'Generator Rotor', geometry: cylZ(60, 40), mount: [cx, cy, -200], material: 'steel', station: E, small: true })
+add({ id: 'generator_cover', ko: '제너레이터 커버', en: 'Generator Cover', geometry: { type: 'composite', children: [{ geometry: cylZ(95, 30) }, { geometry: cylZ(50, 18), position: [0, 0, -24] }] }, mount: [cx, cy, -205], material: 'polished_alu', station: E })
+add({ id: 'oil_pump', ko: '오일펌프', en: 'Oil Pump', geometry: { type: 'box', size: [60, 50, 50] }, mount: [cx + 60, cy - 130, 120], material: 'cast_alu', station: E, small: true })
+add({ id: 'oil_pan', ko: '오일팬', en: 'Oil Pan', geometry: { type: 'box', size: [360, 50, 320] }, mount: [cx, cy - 200, 0], material: 'cast_alu', station: E })
+add({ id: 'oil_filter', ko: '오일필터', en: 'Oil Filter', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 34, radiusBottom: 34, height: 80, segments: 20 }, rotation: [0, 0, -Math.PI / 2] }] }, mount: [cx + 210, cy - 90, 60], material: 'plastic_black', station: E, small: true })
+add({ id: 'starter_motor', ko: '스타터 모터', en: 'Starter Motor', geometry: cylZ(30, 120), mount: [cx - 40, cy + 100, -70], material: 'plastic_black', station: E, small: true })
+add({ id: 'water_pump', ko: '워터펌프', en: 'Water Pump', geometry: { type: 'composite', children: [{ geometry: cylZ(40, 40) }, { geometry: { type: 'box', size: [30, 30, 40] }, position: [0, 40, 0] }] }, mount: [cx + 40, cy - 60, -215], material: 'cast_alu', station: E, small: true })
+add({ id: 'drive_sprocket', ko: '드라이브 스프로킷', en: 'Drive Sprocket', geometry: sprocket(40, 8, 14), mount: [cx - 190, cy - 60, -205], material: 'steel', station: E, small: true })
+add({ id: 'engine_mount_bolt', ko: '엔진 마운트 볼트', en: 'Engine Mount Bolt', geometry: { type: 'composite', children: [{ geometry: cylZ(6, 60) }, { geometry: cylZ(11, 8), position: [0, 0, 30] }] },
+  mount: [0, 0, 0], material: 'steel', marries: E, requires: ['drive_sprocket', 'subframe'], small: true, hint: '엔진 마운트 볼트 체결',
+  camera: { azimuth: 30, polar: 62, distance: 3200, target: [-120, 480, 0] },
+  instances: [ { suffix: 'fl', mount: [80, 560, -170] }, { suffix: 'fr', mount: [80, 560, 170] }, { suffix: 'rl', mount: [-420, 420, -180] }, { suffix: 'rr', mount: [-420, 420, 180] } ] })
+
 // --- C~F. 서스펜션·프런트엔드·바퀴 (Task B4) ---------------------------------
 // --- G~K. 냉각·전장·흡기·배기·조작계 (Task B5) --------------------------------
 // --- L~M. 외장·도색 (Task B6) --------------------------------------------------
