@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useAssembly, useMaterials, useProduct } from '../context'
@@ -14,7 +14,12 @@ export function StationGroup({ station, children }: { station: StationDef; child
   const group = useRef<THREE.Group>(null)
   const product = useProduct()
   const seated = useAssembly((s) => isStationSeated(product, s.mounted, station.id))
-  const off = new THREE.Vector3(station.offset[0] * MM, station.offset[1] * MM, station.offset[2] * MM)
+  // position으로 넘기는 벡터는 반드시 같은 객체여야 한다. 새 객체를 넘기면 R3F가 커밋마다
+  // group.position을 off로 되돌려, 안착 애니메이션 도중의 리렌더나 되돌리기에서 순간이동한다.
+  const off = useMemo(
+    () => new THREE.Vector3(station.offset[0] * MM, station.offset[1] * MM, station.offset[2] * MM),
+    [station],
+  )
   const anim = useRef({ from: off.clone(), to: off.clone(), start: 0 })
 
   useEffect(() => {

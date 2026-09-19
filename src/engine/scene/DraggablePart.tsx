@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useAssembly, useAssemblyStore, useMaterials, useProduct } from '../context'
 import { easeOutCubic } from '../easing'
 import { PartGeometry } from '../geometry/PartGeometry'
-import { stationOffset, type AssemblyStore } from '../store'
+import { isStationSeated, type AssemblyStore } from '../store'
 import { MM, type DragConfig, type PartDef, type Vec3 } from '../types'
 import { cancelCameraTween, setControlsEnabled } from './controlsRef'
 import { resolveDragTargets } from './dragMath'
@@ -55,11 +55,21 @@ function Draggable({ part }: { part: PartDef }) {
   const materials = useMaterials()
   const store = useAssemblyStore()
   const cfg = product.drag
-  const mounted = useAssembly((s) => s.mounted)
 
-  const rest = new THREE.Vector3(part.restPosition[0] * MM, part.restPosition[1] * MM, part.restPosition[2] * MM)
+  // mounted 객체 전체를 구독하면 페인팅으로 하나 박힐 때마다 이 컴포넌트가 다시 렌더되고,
+  // position으로 넘긴 rest가 새 객체면 R3F가 매번 group.position을 되돌려 잡고 있던 부품이
+  // 튕긴다. 그래서 (1) 원시값(결합 여부)만 구독하고 (2) rest 벡터를 memo로 고정한다.
+  const seated = useAssembly((s) => isStationSeated(product, s.mounted, part.station ?? ''))
+
+  const rest = useMemo(
+    () => new THREE.Vector3(part.restPosition[0] * MM, part.restPosition[1] * MM, part.restPosition[2] * MM),
+    [part],
+  )
   // 작업대 부품은 결합 전까지 작업대 오프셋만큼 떠 있는 자리에 장착된다
-  const [ox, oy, oz] = stationOffset(product, part, mounted)
+  const [ox, oy, oz] = useMemo<Vec3>(() => {
+    if (!part.station || seated) return [0, 0, 0]
+    return product.stations.find((s) => s.id === part.station)?.offset ?? [0, 0, 0]
+  }, [product, part, seated])
   /** 잡았을 때 떠 있는 높이 (units) */
   const hoverY = (part.mountPosition[1] + oy + cfg.hoverMm) * MM
 
