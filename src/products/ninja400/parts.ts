@@ -285,7 +285,7 @@ add({ id: 'instrument_cluster', ko: '계기판', en: 'Instrument Cluster', geome
   { geometry: { type: 'box', size: [40, 90, 200] } },
   // 키 실린더: 계기판이 rot [0,0,-0.5]로 서 있어, 키 부품의 월드 마운트(540, 980, 60)에 겹치도록
   // 역회전한 로컬 좌표에 둔다.
-  { geometry: { type: 'cylinder', radiusTop: 12, radiusBottom: 12, height: 20, segments: 16 }, position: [27, -8, 60] } ] },
+  { geometry: { type: 'cylinder', radiusTop: 12, radiusBottom: 12, height: 20, segments: 16 }, position: [27, -8, 60], rotation: [0, 0, 0.5] } ] },
   mount: [520, 1000, 0], rot: [0, 0, -0.5], material: 'plastic_black', small: true, camera: { azimuth: 10, polar: 50, distance: 2200, target: [500, 950, 0] } })
 add({ id: 'headlight', ko: '헤드라이트 유닛', en: 'Headlight Unit', geometry: { type: 'composite', children: [{ geometry: { type: 'box', size: [60, 120, 110] }, position: [0, 0, -95] }, { geometry: { type: 'box', size: [60, 120, 110] }, position: [0, 0, 95] }] }, mount: [720, 900, 0], rot: [0, 0, 0.2], material: 'lamp_off', small: true, camera: { azimuth: 0, polar: 60, distance: 2400, target: [700, 850, 0] } })
 add({ id: 'taillight', ko: '테일라이트', en: 'Tail Light', geometry: { type: 'box', size: [40, 60, 160] }, mount: [-900, 780, 0], material: 'lamp_off', small: true, camera: { azimuth: 180, polar: 60, distance: 2400, target: [-800, 750, 0] } })
