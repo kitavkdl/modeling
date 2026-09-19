@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { validateProduct } from '../../engine/store'
 import { keyboardProduct } from './index'
 
 describe('keyboardProduct', () => {
+  it('passes the engine-wide product validation', () => {
+    expect(validateProduct(keyboardProduct)).toEqual([])
+  })
   it('references only materials in its table', () => {
     for (const p of keyboardProduct.parts) expect(keyboardProduct.materials[p.material], p.id).toBeDefined()
   })

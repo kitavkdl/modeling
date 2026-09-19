@@ -4,6 +4,7 @@ import * as THREE from 'three'
 import { useAssembly, useMaterials, useProduct } from '../context'
 import { easeOutBack, lerp } from '../easing'
 import { PartGeometry } from '../geometry/PartGeometry'
+import { fallbackMaterial } from '../materials'
 import { isStationSeated } from '../store'
 import { MM, type StationDef } from '../types'
 
@@ -56,13 +57,13 @@ export function Props() {
       {product.stations.map((s) =>
         s.prop ? (
           <group key={s.id} position={[s.offset[0] * MM, 0, s.offset[2] * MM]}>
-            <PartGeometry geometry={s.prop} material={materials.get(s.propMaterial ?? 'steel')} materials={materials} />
+            <PartGeometry geometry={s.prop} material={materials.getOr(s.propMaterial, fallbackMaterial)} materials={materials} />
           </group>
         ) : null,
       )}
       {(product.props ?? []).map((p, i) => (
         <group key={i} position={[p.position[0] * MM, p.position[1] * MM, p.position[2] * MM]}>
-          <PartGeometry geometry={p.geometry} material={materials.get(p.material)} materials={materials} />
+          <PartGeometry geometry={p.geometry} material={materials.getOr(p.material, fallbackMaterial)} materials={materials} />
         </group>
       ))}
     </group>

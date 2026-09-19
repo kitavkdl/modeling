@@ -1,6 +1,10 @@
+import { useEffect } from 'react'
 import type { ProductDef } from '../engine/types'
 
 export function ModelSelect({ products, onSelect }: { products: ProductDef[]; onSelect: (p: ProductDef) => void }) {
+  useEffect(() => {
+    document.title = 'Assembly'
+  }, [])
   return (
     <div className="select">
       <div className="select-head">MODEL</div>

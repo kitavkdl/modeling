@@ -9,4 +9,9 @@ describe('product registry', () => {
     expect(productForPath('/')).toBeNull()
     expect(productForPath('/nope')).toBeNull()
   })
+
+  it('ignores query strings and hash fragments', () => {
+    expect(productForPath('/keyboard?utm=x')?.id).toBe('keyboard')
+    expect(productForPath('/keyboard#top')?.id).toBe('keyboard')
+  })
 })

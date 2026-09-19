@@ -32,7 +32,7 @@ export function Lights() {
         shadow-camera-right={r}
         shadow-camera-top={r}
         shadow-camera-bottom={-r}
-        shadow-camera-near={5}
+        shadow-camera-near={Math.max(0.5, r * 0.15)}
         shadow-camera-far={r * 4}
       />
       <directionalLight position={[-r, r * 0.6, -r * 0.87]} intensity={1.1} color="#cfd6e6" />
@@ -42,7 +42,9 @@ export function Lights() {
 
 // 바닥: 무한 평면 + 접촉 그림자. 반사 없음.
 export function Floor() {
-  const [w, d] = useProduct().environment.contactShadowSizeMm
+  const { contactShadowSizeMm, shadowBoundsMm } = useProduct().environment
+  const [w, d] = contactShadowSizeMm
+  const r = shadowBoundsMm * MM
   return (
     <>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.002, 0]} receiveShadow>
@@ -53,7 +55,7 @@ export function Floor() {
         position={[0, 0.001, 0]}
         width={w * MM}
         height={d * MM}
-        far={12}
+        far={r * 0.4}
         blur={2.2}
         opacity={0.75}
         resolution={1024}

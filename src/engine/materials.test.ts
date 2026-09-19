@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createMaterialRegistry } from './materials'
+import { createMaterialRegistry, fallbackMaterial } from './materials'
 
 describe('createMaterialRegistry', () => {
   it('builds standard and physical materials and caches them', () => {
@@ -12,5 +12,12 @@ describe('createMaterialRegistry', () => {
     expect(reg.get('alu')).toBe(reg.get('alu'))
     expect(reg.has('nope')).toBe(false)
     expect(() => reg.get('nope')).toThrow(/unknown material/)
+  })
+
+  it('getOr returns the fallback when the name is missing', () => {
+    const reg = createMaterialRegistry({ alu: { color: '#888' } })
+    expect(reg.getOr('alu', fallbackMaterial)).toBe(reg.get('alu'))
+    expect(reg.getOr('nope', fallbackMaterial)).toBe(fallbackMaterial)
+    expect(reg.getOr(undefined, fallbackMaterial)).toBe(fallbackMaterial)
   })
 })

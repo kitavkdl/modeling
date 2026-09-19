@@ -39,7 +39,7 @@ export function PartGeometry({ geometry, material, materials, simple = false }: 
       return (
         <RoundedBox
           args={v3(geometry.size)}
-          radius={u(Math.min(geometry.radius, Math.min(...geometry.size) / 2 - 0.01))}
+          radius={u(Math.max(0.01, Math.min(geometry.radius, Math.min(...geometry.size) / 2 - 0.01)))}
           smoothness={3}
           material={material}
           position={[0, u(geometry.size[1]) / 2, 0]}

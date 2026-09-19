@@ -90,6 +90,40 @@ export function stationOffset(product: ProductDef, part: PartDef, mounted: Mount
   return st ? st.offset : [0, 0, 0]
 }
 
+/**
+ * 제품 정의 자체의 앞뒤가 맞는지 검사한다 (다음 제품 추가 전 안전장치).
+ * 문제를 사람이 읽을 문자열 목록으로 돌려준다. 비어 있으면 문제 없음.
+ */
+export function validateProduct(product: ProductDef): string[] {
+  const out: string[] = []
+  const stationIds = new Set(product.stations.map((s) => s.id))
+  const partIds = new Set(product.parts.map((p) => p.id))
+
+  for (const part of product.parts) {
+    if (part.station && !stationIds.has(part.station)) {
+      out.push(`part "${part.id}" references unknown station "${part.station}"`)
+    }
+    for (const req of part.requires) {
+      if (!partIds.has(req)) {
+        out.push(`part "${part.id}" requires unknown part "${req}"`)
+      }
+    }
+    if (part.variants && part.count !== 1) {
+      out.push(`part "${part.id}" has variants but count is ${part.count} (expected 1)`)
+    }
+  }
+
+  for (const station of product.stations) {
+    const hasParts = product.parts.some((p) => p.station === station.id)
+    const isMarried = product.parts.some((p) => p.marries === station.id)
+    if (hasParts && !isMarried) {
+      out.push(`station "${station.id}" has parts but no part marries it`)
+    }
+  }
+
+  return out
+}
+
 function initialMounted(product: ProductDef): Mounted {
   const m: Mounted = {}
   const t = now()

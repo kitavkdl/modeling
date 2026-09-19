@@ -1,7 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PARTS, PART_BY_ID } from '../products/keyboard/parts'
 import { keyboardProduct as product } from '../products/keyboard'
-import { availableParts, createAssemblyStore, isAssemblyComplete, isStationSeated, stationOffset, type AssemblyStore } from './store'
+import type { ProductDef } from './types'
+import {
+  availableParts,
+  createAssemblyStore,
+  isAssemblyComplete,
+  isStationSeated,
+  stationOffset,
+  validateProduct,
+  type AssemblyStore,
+} from './store'
 
 let store: AssemblyStore
 
@@ -190,5 +199,22 @@ describe('assembly store', () => {
     s.getState().reset()
     expect(s.getState().mounted.bottom_case).toBeDefined()
     expect(s.getState().mounted.bottom_foam).toBeUndefined()
+  })
+})
+
+describe('validateProduct', () => {
+  it('has no problems for the keyboard product', () => {
+    expect(validateProduct(product)).toEqual([])
+  })
+
+  it('flags a station that has parts but nothing marries it', () => {
+    const broken: ProductDef = {
+      ...product,
+      stations: [...product.stations, { id: 'orphan', nameKo: '고아', offset: [0, 0, 0] }],
+      parts: [{ ...PARTS[0], station: 'orphan' }, ...PARTS.slice(1)],
+    }
+    const messages = validateProduct(broken)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toContain('orphan')
   })
 })
