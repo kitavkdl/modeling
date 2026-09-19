@@ -7,7 +7,7 @@ describe('ninja400Product', () => {
     expect(ninja400Product.phasesAfterComplete).toEqual(['keyed', 'running'])
     expect(ninja400Product.hints.complete).toBe('키 삽입')
     expect(ninja400Product.hints.running).toBe('스로틀 개방')
-    expect(ninja400Product.drag).toEqual({ snapMm: 150, paintMm: 25, hoverMm: 150, grabMinMm: 200 })
+    expect(ninja400Product.drag).toEqual({ snapMm: 150, paintMm: 25, grabMinMm: 200 })
   })
   it('lists three stations with props', () => {
     expect(ninja400Product.stations.map((s) => s.id)).toEqual(['engine', 'front_wheel', 'rear_wheel'])

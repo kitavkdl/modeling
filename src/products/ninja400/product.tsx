@@ -27,7 +27,7 @@ export const ninja400Product: ProductDef = {
     minPolarDeg: 20,
     maxPolarDeg: 85,
   },
-  drag: { snapMm: 150, paintMm: 25, hoverMm: 150, grabMinMm: 200 },
+  drag: { snapMm: 150, paintMm: 25, grabMinMm: 200 },
   environment: { contactShadowSizeMm: [4200, 3200], shadowBoundsMm: 2400 },
   Finale: NinjaFinale,
   renderInstance: (ctx) => {

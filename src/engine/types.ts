@@ -109,7 +109,6 @@ export type MaterialSpec =
 export interface DragConfig {
   snapMm: number
   paintMm: number
-  hoverMm: number
   grabMinMm: number
 }
 

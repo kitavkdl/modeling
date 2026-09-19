@@ -21,7 +21,7 @@ export const keyboardProduct: ProductDef = {
     minPolarDeg: 20,
     maxPolarDeg: 80,
   },
-  drag: { snapMm: 60, paintMm: 12, hoverMm: 30, grabMinMm: 50 },
+  drag: { snapMm: 60, paintMm: 12, grabMinMm: 50 },
   environment: { contactShadowSizeMm: [600, 450], shadowBoundsMm: 300 },
   Finale: KeyboardFinale,
   renderInstance: (ctx) => (ctx.part.id === 'keycap' ? <Keycap {...ctx} /> : null),

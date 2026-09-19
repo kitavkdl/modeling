@@ -22,8 +22,11 @@ export function MountedInstanceView({ part, inst, record }: Props) {
   const materials = useMaterials()
   const group = useRef<THREE.Group>(null)
   const end = inst.mountPosition
-  /** 다수 부품이 내려앉기 시작하는 높이. 잡고 있던 높이에서 내려오는 것이 자연스럽다 */
-  const dropMm = product.drag.hoverMm
+  /**
+   * 드래그 없이(건너뛰기·순차 장착) 박히는 다수 부품이 내려앉기 시작하는 높이.
+   * 제품 스케일에 비례해야 해서 스냅 반경의 절반을 쓴다 (키보드 30mm, 닌자 75mm).
+   */
+  const dropMm = product.drag.snapMm / 2
 
   // 시작점: 드래그로 놓았다면 그 자리(record.from). DraggablePart가 이미 작업대 오프셋을
   // 뺀 작업대 로컬 좌표로 넘기므로 여기서 또 빼지 않는다.

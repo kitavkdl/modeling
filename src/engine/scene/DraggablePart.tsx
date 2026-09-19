@@ -1,37 +1,42 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useAssembly, useAssemblyStore, useMaterials, useProduct } from '../context'
 import { easeOutCubic } from '../easing'
 import { PartGeometry } from '../geometry/PartGeometry'
-import { isStationSeated, type AssemblyStore } from '../store'
-import { MM, type DragConfig, type PartDef, type Vec3 } from '../types'
+import { isStationSeated } from '../store'
+import { MM, type PartDef, type Vec3 } from '../types'
 import { cancelCameraTween, setControlsEnabled } from './controlsRef'
-import { resolveDragTargets } from './dragMath'
+import { resolveDragTargets, thresholdPx, type GhostPx, type ScreenPt } from './dragMath'
 
 // 트레이에서 고른 부품의 실물. 대기 위치에 놓여 있고, 잡아서 끌 수 있다.
-// 단일 부품: 고스트 근처에서 놓으면 장착. 멀리서 놓으면 제자리로 돌아간다.
+// 단일 부품: 고스트 위에 겹쳐 놓으면 장착. 멀리서 놓으면 제자리로 돌아간다.
 // 다수 부품: 하나를 잡고 슬롯 위를 지나가면 지나간 자리마다 장착된다.
+//
+// 이동면은 잡은 지점을 지나는 "카메라 정면" 평면이다. 카메라를 어느 각도로 돌려놔도
+// 부품은 커서에 붙어 다니고, 판정도 화면 좌표로 하므로 눈에 겹쳐 보이면 그대로 장착된다.
 
 /** 놓쳤을 때 제자리로 돌아가는 시간 */
 const RETURN_MS = 300
 
-const up = new THREE.Vector3(0, 1, 0)
-
 interface DragState {
-  /** 잡은 지점이 미끄러지는 수평면. 부품 밑면이 장착 높이에 올 때 잡은 지점이 놓이는 높이다 */
+  /** 잡은 지점을 지나는, 카메라를 향한 평면 */
   plane: THREE.Plane
-  /** 커서 교점 → 부품 밑면 위치 오프셋 (units, 수평) */
+  /** 커서 교점 → 부품 원점 오프셋 (units) */
   offset: THREE.Vector3
-  /** 커서가 가리키는 부품 목표 위치 (units). 밑면 높이는 장착 높이. 판정은 이 값으로 한다 */
+  /** 커서가 가리키는 부품 위치 (units). 판정·렌더·장착 출발점 모두 이 값 */
   target: THREE.Vector3
-  /** 지금 커서 광선의 방향. 렌더는 target에서 이 방향의 반대로 hover만큼 띄운다 */
-  rayDir: THREE.Vector3
 }
 
 interface ReturnState {
   from: THREE.Vector3
   start: number
+}
+
+/** 월드 좌표를 캔버스 좌상단 기준 픽셀로 옮긴다 */
+function projectPx(v: THREE.Vector3, camera: THREE.Camera, rect: DOMRect, out: THREE.Vector3): ScreenPt {
+  out.copy(v).project(camera)
+  return { x: ((out.x + 1) / 2) * rect.width, y: ((1 - out.y) / 2) * rect.height }
 }
 
 export function DraggablePart() {
@@ -47,12 +52,16 @@ export function DraggablePart() {
 
 function Draggable({ part }: { part: PartDef }) {
   const group = useRef<THREE.Group>(null)
+  const visual = useRef<THREE.Group>(null)
+  const grabMesh = useRef<THREE.Mesh>(null)
   const drag = useRef<DragState | null>(null)
   const returning = useRef<ReturnState | null>(null)
   const { camera, gl } = useThree()
   const raycaster = useRef(new THREE.Raycaster()).current
   const ndc = useRef(new THREE.Vector2()).current
   const tmp = useRef(new THREE.Vector3()).current
+  const anchor = useRef(new THREE.Vector3()).current
+  const proj = useRef(new THREE.Vector3()).current
 
   const product = useProduct()
   const materials = useMaterials()
@@ -73,10 +82,6 @@ function Draggable({ part }: { part: PartDef }) {
     if (!part.station || seated) return [0, 0, 0]
     return product.stations.find((s) => s.id === part.station)?.offset ?? [0, 0, 0]
   }, [product, part, seated])
-  /** 장착됐을 때 부품 밑면의 높이 (units). 드래그 판정면이 여기 있다 */
-  const baseY = (part.mountPosition[1] + oy) * MM
-  /** 잡고 있는 동안 카메라 쪽으로 띄우는 거리 (units) */
-  const lift = cfg.hoverMm * MM
 
   const endDrag = useCallback(() => {
     const s = store.getState()
@@ -106,11 +111,37 @@ function Draggable({ part }: { part: PartDef }) {
       const rect = gl.domElement.getBoundingClientRect()
       ndc.set(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1)
       raycaster.setFromCamera(ndc, camera)
-      if (raycaster.ray.intersectPlane(d.plane, tmp)) {
-        d.target.set(tmp.x + d.offset.x, baseY, tmp.z + d.offset.z)
-        d.rayDir.copy(raycaster.ray.direction)
-        resolveTargets(store, part, d.target, cfg, [ox, oy, oz])
+      if (!raycaster.ray.intersectPlane(d.plane, tmp)) return
+      d.target.copy(tmp).add(d.offset)
+
+      // 판정은 화면에서 한다: 고스트와 부품을 둘 다 픽셀로 투영하고, 반경 안에 들어오면 장착.
+      const fov = (camera as THREE.PerspectiveCamera).fov ?? 40
+      const radiusMm = part.count === 1 ? cfg.snapMm : cfg.paintMm
+      const mounted = store.getState().mounted
+      const ghosts: GhostPx[] = []
+      for (const inst of part.instances) {
+        if (mounted[inst.id]) continue
+        anchor.set(
+          (inst.mountPosition[0] + ox) * MM,
+          (inst.mountPosition[1] + oy) * MM,
+          (inst.mountPosition[2] + oz) * MM,
+        )
+        const dist = camera.position.distanceTo(anchor)
+        ghosts.push({
+          id: inst.id,
+          px: projectPx(anchor, camera, rect, proj),
+          radiusPx: thresholdPx(radiusMm, dist, rect.height, fov),
+        })
       }
+      const partPx = projectPx(d.target, camera, rect, proj)
+      const { snap, paint } = resolveDragTargets(part, partPx, ghosts, mounted)
+      const s = store.getState()
+      if (part.count === 1) {
+        s.setDragTarget(snap)
+        return
+      }
+      // 출발점은 잡고 있는 실물 위치. 들고 있는 부품에서 튀어나와 박히는 것처럼 보인다.
+      for (const id of paint) s.mount(id, [d.target.x / MM - ox, d.target.y / MM - oy, d.target.z / MM - oz])
     }
     const upHandler = () => {
       if (drag.current) endDrag()
@@ -132,7 +163,7 @@ function Draggable({ part }: { part: PartDef }) {
         document.body.style.cursor = ''
       }
     }
-  }, [camera, gl, endDrag, ndc, raycaster, tmp, part, store, cfg, ox, oy, oz, baseY])
+  }, [camera, gl, endDrag, ndc, raycaster, tmp, anchor, proj, part, store, cfg, ox, oy, oz])
 
   const onPointerDown = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
@@ -143,33 +174,53 @@ function Draggable({ part }: { part: PartDef }) {
       setControlsEnabled(false)
       cancelCameraTween()
       returning.current = null
-      // 잡은 지점(e.point)이 부품 밑면보다 얼마나 위인지(dy)를 재고, 부품 밑면이 장착 높이에 올 때
-      // 잡은 지점이 놓일 높이에 수평 판정면을 둔다. 커서 광선과 이 면의 교점에 수평 오프셋을 더하면
-      // 잡은 지점은 늘 커서 아래에 있고, 부품을 고스트 위에 겹쳐 보이게 놓으면 그대로 판정도 맞는다.
-      // (판정면을 장착 높이보다 띄우면 띄운 만큼 화면상 시차가 생겨, 고스트보다 위에 들고 있어야 장착됐다.)
-      const dy = e.point.y - g.position.y
-      const plane = new THREE.Plane(up, -(baseY + dy))
-      const offset = new THREE.Vector3(g.position.x - e.point.x, 0, g.position.z - e.point.z)
-      raycaster.setFromCamera(e.pointer, camera)
-      const hit = new THREE.Vector3()
-      const target = raycaster.ray.intersectPlane(plane, hit)
-        ? new THREE.Vector3(hit.x + offset.x, baseY, hit.z + offset.z)
-        : new THREE.Vector3(g.position.x, baseY, g.position.z)
-      drag.current = { plane, offset, target, rayDir: raycaster.ray.direction.clone() }
+      // 잡은 지점을 지나는 카메라 정면 평면 위에서만 움직인다. 이 평면은 화면에 평행하므로
+      // 커서를 따라가는 동안 잡은 지점이 늘 커서 아래에 있고, 화면에서 겹쳐 보이면 실제로도 맞는다.
+      const normal = camera.getWorldDirection(new THREE.Vector3()).negate()
+      const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, e.point)
+      const offset = g.position.clone().sub(e.point)
+      drag.current = { plane, offset, target: g.position.clone() }
       store.getState().setDragging(true)
       document.body.style.cursor = 'grabbing'
     },
-    [camera, baseY, raycaster, store],
+    [camera, store],
   )
 
+  // 잡기 영역: 그려진 지오메트리의 실제 크기(Box3)에 맞추고, 너무 작으면 grabMinMm까지 키운다.
+  const grabSized = useRef(false)
+  const grabRetry = useRef(true)
+  const sizeGrab = useCallback(() => {
+    const v = visual.current
+    const m = grabMesh.current
+    if (!v || !m) return false
+    v.updateWorldMatrix(true, true)
+    const box = new THREE.Box3().setFromObject(v)
+    if (box.isEmpty()) return false
+    const size = box.getSize(new THREE.Vector3())
+    const center = box.getCenter(new THREE.Vector3())
+    const minSide = cfg.grabMinMm * MM
+    // 렌더 그룹은 회전 없이 rest에 놓여 있으므로 월드 차이가 그대로 그룹 로컬 오프셋이다
+    m.position.copy(center).sub(v.getWorldPosition(new THREE.Vector3()))
+    m.scale.set(Math.max(size.x, minSide), Math.max(size.y, minSide), Math.max(size.z, minSide))
+    return true
+  }, [cfg.grabMinMm])
+
+  useLayoutEffect(() => {
+    grabSized.current = sizeGrab()
+    grabRetry.current = !grabSized.current
+  }, [part, sizeGrab])
+
   useFrame(() => {
+    // 첫 레이아웃에서 박스가 비어 있었다면(지오메트리가 아직 없던 경우) 한 번만 더 잰다
+    if (grabRetry.current) {
+      grabRetry.current = false
+      grabSized.current = sizeGrab()
+    }
     const g = group.current
     if (!g) return
     const d = drag.current
     if (d) {
-      // 띄우기는 위가 아니라 카메라 쪽으로 한다. 화면 위치는 그대로라 고스트와 겹쳐 보이면 실제로도 겹친다.
-      tmp.copy(d.target).addScaledVector(d.rayDir, -lift)
-      g.position.lerp(tmp, 0.4)
+      g.position.lerp(d.target, 0.5)
       return
     }
     const r = returning.current
@@ -187,7 +238,6 @@ function Draggable({ part }: { part: PartDef }) {
     g.position.set(rest.x, rest.y + Math.sin(performance.now() / 900) * 0.12, rest.z)
   })
 
-  const grab = cfg.grabMinMm
   return (
     <group
       ref={group}
@@ -201,30 +251,14 @@ function Draggable({ part }: { part: PartDef }) {
         if (!drag.current) document.body.style.cursor = ''
       }}
     >
-      <PartGeometry geometry={part.geometry} material={materials.get(part.material)} materials={materials} />
+      <group ref={visual}>
+        <PartGeometry geometry={part.geometry} material={materials.get(part.material)} materials={materials} />
+      </group>
       {/* 잡기 영역: 렌더되지 않지만 레이캐스트에는 잡힌다 */}
-      <mesh position={[0, (grab / 2) * MM, 0]}>
-        <boxGeometry args={[grab * MM, grab * MM, grab * MM]} />
+      <mesh ref={grabMesh}>
+        <boxGeometry args={[1, 1, 1]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
     </group>
   )
-}
-
-/**
- * 드래그 중 매 프레임: 단일 부품은 가장 가까운 고스트를 dragTarget으로,
- * 다수 부품은 paintMm 안에 들어온 슬롯을 즉시 장착한다.
- */
-function resolveTargets(store: AssemblyStore, part: PartDef, pos: THREE.Vector3, cfg: DragConfig, off: Vec3) {
-  const s = store.getState()
-  const px = pos.x / MM
-  const py = pos.y / MM
-  const pz = pos.z / MM
-  const { snap, paint } = resolveDragTargets(part, [px - off[0], py, pz - off[2]], cfg, s.mounted)
-  if (part.count === 1) {
-    s.setDragTarget(snap)
-    return
-  }
-  // 출발점은 잡고 있는 실물 위치. 들고 있는 부품에서 튀어나와 박히는 것처럼 보인다.
-  for (const id of paint) s.mount(id, [px - off[0], py - off[1], pz - off[2]])
 }
