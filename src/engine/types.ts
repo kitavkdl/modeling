@@ -89,6 +89,8 @@ export interface PartDef {
   hidden?: boolean
   cameraView: CameraView
   hint: string
+  /** 이 부품이 다 장착되면 넘어갈 phase (마지막 부품에만 의미 있음) */
+  phaseOnMount?: string
 }
 
 export interface StationDef {

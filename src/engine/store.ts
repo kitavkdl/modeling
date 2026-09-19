@@ -17,7 +17,8 @@ export interface AssemblyState {
 
   selectPart: (partId: string | null) => void
   mount: (instanceId: string, from?: Vec3, variantId?: string) => boolean
-  mountAll: (partId: string, intervalMs?: number) => void
+  mountAll: (partId: string, intervalMs?: number, from?: Vec3) => void
+  skipCurrent: () => void
   undo: () => void
   setDragging: (v: boolean) => void
   setDragTarget: (id: string | null) => void
@@ -182,13 +183,13 @@ export function createAssemblyStore(product: ProductDef): AssemblyStore {
         history: [...state.history, instanceId],
         lastMount: { partId: part.id, at: now() },
         selectedPartId: complete ? nextAvailablePartId(product, mounted) : state.selectedPartId,
-        phase: allDone ? 'complete' : 'assembly',
+        phase: allDone ? (part.phaseOnMount ?? 'complete') : 'assembly',
         phaseAt: allDone ? now() : state.phaseAt,
       })
       return true
     },
 
-    mountAll: (partId, intervalMs = 20) => {
+    mountAll: (partId, intervalMs = 20, from?: Vec3) => {
       const part = product.parts.find((p) => p.id === partId)
       if (!part || get().sequencing || part.variants) return
       const remaining = part.instances.filter((i) => !get().mounted[i.id]).sort((a, b) => a.order - b.order)
@@ -201,19 +202,31 @@ export function createAssemblyStore(product: ProductDef): AssemblyStore {
           set({ sequencing: false })
           return
         }
-        get().mount(remaining[idx].id)
+        get().mount(remaining[idx].id, from)
         idx++
         sequenceTimer = setTimeout(step, intervalMs)
       }
       step()
     },
 
+    skipCurrent: () => {
+      const { selectedPartId, sequencing, phase } = get()
+      if (!selectedPartId || sequencing || phase !== 'assembly') return
+      const part = product.parts.find((p) => p.id === selectedPartId)
+      if (!part || part.variants) return
+      get().mountAll(part.id, 20, part.restPosition)
+    },
+
     undo: () => {
       const state = get()
-      if (state.phase !== 'assembly' && state.phase !== 'complete') return
-      if (state.sequencing) clearSequence()
       const last = state.history[state.history.length - 1]
-      if (!last) return
+      const lastPart = last ? partOf(product, last) : null
+      const allowed =
+        state.phase === 'assembly' ||
+        state.phase === 'complete' ||
+        (lastPart?.phaseOnMount !== undefined && state.phase === lastPart.phaseOnMount)
+      if (!allowed || !last) return
+      if (state.sequencing) clearSequence()
       const mounted = { ...state.mounted }
       delete mounted[last]
       set({
@@ -257,3 +270,9 @@ export function createAssemblyStore(product: ProductDef): AssemblyStore {
     },
   }))
 }
+
+export const canSkip = (s: Pick<AssemblyState, 'selectedPartId' | 'sequencing' | 'phase' | 'product'>): boolean =>
+  s.phase === 'assembly' &&
+  !s.sequencing &&
+  !!s.selectedPartId &&
+  !s.product.parts.find((p) => p.id === s.selectedPartId)?.variants

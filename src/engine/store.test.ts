@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PARTS, PART_BY_ID } from '../products/keyboard/parts'
 import { keyboardProduct as product } from '../products/keyboard'
-import type { ProductDef } from './types'
+import type { PartDef, ProductDef } from './types'
 import {
   availableParts,
+  canSkip,
   createAssemblyStore,
   isAssemblyComplete,
   isStationSeated,
@@ -199,6 +200,93 @@ describe('assembly store', () => {
     s.getState().reset()
     expect(s.getState().mounted.bottom_case).toBeDefined()
     expect(s.getState().mounted.bottom_foam).toBeUndefined()
+  })
+})
+
+function tinyProduct(withPhaseOnMount = false): ProductDef {
+  // 부품 3개: a(preplaced) → b(count 2) → c(마지막, phaseOnMount)
+  const mk = (id: string, count: number, requires: string[], extra: Partial<PartDef> = {}): PartDef => ({
+    id,
+    nameKo: id,
+    nameEn: id,
+    geometry: { type: 'box', size: [10, 10, 10] },
+    material: 'm',
+    restPosition: [0, 0, 500],
+    mountPosition: [0, 0, 0],
+    mountRotation: [0, 0, 0],
+    requires,
+    count,
+    instances: Array.from({ length: count }, (_, i) => ({
+      // 멀티 인스턴스 부품은 `partId:key` 규칙을 쓴다 (partOf가 ':' 앞을 partId로 본다)
+      id: count === 1 ? id : `${id}:${i}`,
+      mountPosition: [i * 20, 0, 0],
+      mountRotation: [0, 0, 0],
+      geometry: { type: 'box', size: [10, 10, 10] },
+      order: i / Math.max(1, count - 1),
+    })),
+    cameraView: { azimuth: 0, polar: 60, distance: 1000 },
+    hint: `${id} 장착`,
+    ...extra,
+  })
+  return {
+    ...product,
+    phasesAfterComplete: ['keyed', 'running'],
+    parts: [mk('a', 1, [], { preplaced: true }), mk('b', 2, ['a']), mk('c', 1, ['b'], withPhaseOnMount ? { phaseOnMount: 'keyed' } : {})],
+  }
+}
+
+describe('skipCurrent / phaseOnMount', () => {
+  beforeEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('skipCurrent는 선택 부품의 남은 인스턴스를 전부 장착하고 대기 위치를 from으로 남긴다', async () => {
+    vi.useFakeTimers()
+    const store = createAssemblyStore(tinyProduct())
+    expect(store.getState().selectedPartId).toBe('b')
+    expect(canSkip(store.getState())).toBe(true)
+    store.getState().skipCurrent()
+    expect(canSkip(store.getState())).toBe(false) // sequencing 중
+    await vi.runAllTimersAsync()
+    expect(store.getState().mounted['b:0'].from).toEqual([0, 0, 500])
+    expect(store.getState().mounted['b:1']).toBeDefined()
+    expect(store.getState().selectedPartId).toBe('c')
+  })
+
+  it('마지막 부품에 phaseOnMount가 있으면 complete 대신 그 phase로 간다', () => {
+    const store = createAssemblyStore(tinyProduct(true))
+    store.getState().mount('b:0')
+    store.getState().mount('b:1')
+    store.getState().mount('c')
+    expect(store.getState().phase).toBe('keyed')
+  })
+
+  it('phaseOnMount로 간 phase에서는 되돌리기가 허용되고 assembly로 돌아온다', () => {
+    const store = createAssemblyStore(tinyProduct(true))
+    store.getState().mount('b:0')
+    store.getState().mount('b:1')
+    store.getState().mount('c')
+    store.getState().undo()
+    expect(store.getState().phase).toBe('assembly')
+    expect(store.getState().mounted.c).toBeUndefined()
+    expect(store.getState().selectedPartId).toBe('c')
+  })
+
+  it('phaseOnMount 뒤로 advancePhase하면 되돌리기가 막힌다', () => {
+    const store = createAssemblyStore(tinyProduct(true))
+    store.getState().mount('b:0')
+    store.getState().mount('b:1')
+    store.getState().mount('c')
+    store.getState().advancePhase() // keyed → running
+    expect(store.getState().phase).toBe('running')
+    store.getState().undo()
+    expect(store.getState().phase).toBe('running')
+  })
+
+  it('canSkip은 선택 부품이 없거나 sequencing 중이면 false', () => {
+    const store = createAssemblyStore(tinyProduct())
+    store.getState().selectPart(null)
+    expect(canSkip(store.getState())).toBe(false)
   })
 })
 
