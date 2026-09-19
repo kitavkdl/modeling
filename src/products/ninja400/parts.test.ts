@@ -69,4 +69,10 @@ describe('ninja400 parts', () => {
     expect(PART_BY_ID.fork.count).toBe(2)
     expect(PART_BY_ID.front_wheel.mountPosition).toEqual([685, 293, 0])
   })
+  it('lamps use lamp_off and the tank is paintable', () => {
+    for (const id of ['headlight', 'taillight', 'turn_signal']) expect(PART_BY_ID[id].material).toBe('lamp_off')
+    expect(PART_BY_ID.fuel_tank.paintable).toBe(true)
+    expect(PART_BY_ID.turn_signal.count).toBe(4)
+    expect(PART_BY_ID.radiator.requires).toEqual(['chain'])
+  })
 })

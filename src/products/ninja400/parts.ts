@@ -3,7 +3,7 @@
 // 부품을 추가할 때는 아래 구분 주석 자리에 add({...})를 순서대로 끼워 넣는다.
 
 import type { CameraView, Geometry, PartDef, PartInstance, ProductDef, StationDef, Vec3 } from '../../engine/types'
-import { cylZ, disc, forkLeg, sprocket, trellis, wheel } from './geometry'
+import { cylZ, disc, forkLeg, sprocket, tank, trellis, wheel } from './geometry'
 import {
   CRANK,
   FORK_LEN,
@@ -265,6 +265,37 @@ add({ id: 'chain', ko: '체인', en: 'Drive Chain', geometry: { type: 'composite
   mount: [cx - 190, cy - 60, -205], material: 'chain', requires: ['rear_axle', 'drive_sprocket'], small: true, camera: { azimuth: -60, polar: 62, distance: 2600, target: [-400, 400, 0] } })
 
 // --- G~K. 냉각·전장·흡기·배기·조작계 (Task B5) --------------------------------
+add({ id: 'radiator', ko: '라디에이터', en: 'Radiator', geometry: { type: 'box', size: [30, 280, 380] }, mount: [230, 420, 0], material: 'cast_alu', requires: ['chain'], camera: { azimuth: 60, polar: 62, distance: 2600, target: [250, 500, 0] } })
+add({ id: 'cooling_fan', ko: '냉각 팬', en: 'Cooling Fan', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 110, radiusBottom: 110, height: 40, segments: 24 }, rotation: [0, 0, -Math.PI / 2] }] }, mount: [215, 540, 40], material: 'plastic_black', small: true })
+add({ id: 'radiator_hose', ko: '라디에이터 호스', en: 'Radiator Hose', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 13, radiusBottom: 13, height: 260, segments: 12 }, rotation: [0, 0, -Math.PI / 2] }] }, mount: [0, 0, 0], material: 'rubber', small: true,
+  instances: [{ suffix: 'upper', mount: [10, 690, -150] }, { suffix: 'lower', mount: [-20, 300, -190] }] })
+add({ id: 'coolant_reservoir', ko: '리저브 탱크', en: 'Coolant Reservoir', geometry: { type: 'box', size: [90, 140, 60] }, mount: [-200, 260, 190], material: 'plastic_black', small: true })
+add({ id: 'battery', ko: '배터리', en: 'Battery', geometry: { type: 'box', size: [140, 100, 90] }, mount: [-560, 620, 0], material: 'plastic_black', small: true, camera: { azimuth: -30, polar: 55, distance: 2600, target: [-500, 700, 0] } })
+add({ id: 'ecu', ko: 'ECU', en: 'ECU', geometry: { type: 'box', size: [120, 30, 100] }, mount: [-650, 720, 0], material: 'plastic_black', small: true })
+add({ id: 'instrument_cluster', ko: '계기판', en: 'Instrument Cluster', geometry: { type: 'box', size: [40, 90, 200] }, mount: [520, 1000, 0], rot: [0, 0, -0.5], material: 'plastic_black', small: true, camera: { azimuth: 10, polar: 50, distance: 2200, target: [500, 950, 0] } })
+add({ id: 'headlight', ko: '헤드라이트 유닛', en: 'Headlight Unit', geometry: { type: 'composite', children: [{ geometry: { type: 'box', size: [60, 120, 110] }, position: [0, 0, -95] }, { geometry: { type: 'box', size: [60, 120, 110] }, position: [0, 0, 95] }] }, mount: [780, 900, 0], rot: [0, 0, 0.2], material: 'lamp_off', small: true, camera: { azimuth: 0, polar: 60, distance: 2400, target: [700, 850, 0] } })
+add({ id: 'taillight', ko: '테일라이트', en: 'Tail Light', geometry: { type: 'box', size: [40, 60, 160] }, mount: [-900, 780, 0], material: 'lamp_off', small: true, camera: { azimuth: 180, polar: 60, distance: 2400, target: [-800, 750, 0] } })
+add({ id: 'turn_signal', ko: '방향지시등', en: 'Turn Signal', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 6, radiusBottom: 6, height: 60, segments: 8 }, rotation: [Math.PI / 2, 0, 0] }, { geometry: { type: 'box', size: [50, 30, 30] }, position: [0, 0, 70] }] }, mount: [0, 0, 0], material: 'lamp_off', small: true,
+  instances: [{ suffix: 'fl', mount: [700, 820, -150], rot: [0, Math.PI, 0] }, { suffix: 'fr', mount: [700, 820, 150] }, { suffix: 'rl', mount: [-880, 700, -110], rot: [0, Math.PI, 0] }, { suffix: 'rr', mount: [-880, 700, 110] }] })
+add({ id: 'airbox', ko: '에어박스', en: 'Airbox', geometry: { type: 'roundedBox', size: [260, 170, 300], radius: 20 }, mount: [-120, 730, 0], material: 'plastic_black', camera: { azimuth: 30, polar: 50, distance: 2800, target: [-100, 800, 0] } })
+add({ id: 'throttle_body', ko: '스로틀 바디', en: 'Throttle Body', geometry: { type: 'composite', children: [{ geometry: cylZ(28, 200) }, { geometry: { type: 'box', size: [60, 40, 200] }, position: [0, 30, 0] }] }, mount: tilt(-70, 400, 0), rot: TILT_ROT, material: 'cast_alu', small: true })
+add({ id: 'fuel_tank', ko: '연료탱크', en: 'Fuel Tank', geometry: tank(), mount: [40, 840, 0], material: 'primer', paintable: true, camera: { azimuth: 30, polar: 55, distance: 3000, target: [0, 900, 0] } })
+add({ id: 'exhaust_header', ko: '배기 헤더', en: 'Exhaust Header', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 19, radiusBottom: 19, height: 320, segments: 12 } }, { geometry: { type: 'cylinder', radiusTop: 19, radiusBottom: 19, height: 360, segments: 12 }, position: [0, 320, 0], rotation: [0, 0, -1.2] }] },
+  mount: [0, 0, 0], rot: [0, 0, Math.PI - 0.35], material: 'stainless', small: true,
+  instances: [{ suffix: 'l', mount: tilt(120, 260, -42) }, { suffix: 'r', mount: tilt(120, 260, 42) }],
+  camera: { azimuth: 70, polar: 65, distance: 2800, target: [100, 350, 0] } })
+add({ id: 'exhaust_collector', ko: '배기 집합부', en: 'Exhaust Collector', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 26, radiusBottom: 26, height: 600, segments: 14 }, rotation: [0, 0, Math.PI / 2 + 0.05] }] }, mount: [180, 210, 120], material: 'stainless' })
+add({ id: 'muffler', ko: '머플러', en: 'Muffler', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 55, radiusBottom: 45, height: 420, segments: 20 }, rotation: [0, 0, Math.PI / 2 + 0.35] }] }, mount: [-450, 240, 190], material: 'stainless', camera: { azimuth: 90, polar: 62, distance: 2800, target: [-500, 350, 0] } })
+add({ id: 'brake_pedal', ko: '브레이크 페달', en: 'Brake Pedal', geometry: { type: 'composite', children: [{ geometry: { type: 'box', size: [180, 14, 14] } }, { geometry: { type: 'box', size: [40, 14, 40] }, position: [90, 0, 20] }] }, mount: [-300, 330, 200], material: 'steel', small: true })
+add({ id: 'shift_lever', ko: '시프트 레버', en: 'Shift Lever', geometry: { type: 'composite', children: [{ geometry: { type: 'box', size: [180, 14, 14] } }, { geometry: { type: 'box', size: [40, 14, 40] }, position: [90, 0, -20] }] }, mount: [-300, 330, -200], material: 'steel', small: true })
+add({ id: 'rider_peg', ko: '라이더 스텝', en: 'Rider Footpeg', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 12, radiusBottom: 12, height: 90, segments: 10 }, rotation: [Math.PI / 2, 0, 0] }] }, mount: [0, 0, 0], material: 'steel', small: true,
+  instances: [{ suffix: 'l', mount: [-330, 360, -180], rot: [0, Math.PI, 0] }, { suffix: 'r', mount: [-330, 360, 180] }] })
+add({ id: 'passenger_peg', ko: '동승자 스텝', en: 'Passenger Footpeg', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 11, radiusBottom: 11, height: 80, segments: 10 }, rotation: [Math.PI / 2, 0, 0] }] }, mount: [0, 0, 0], material: 'steel', small: true,
+  instances: [{ suffix: 'l', mount: [-620, 500, -170], rot: [0, Math.PI, 0] }, { suffix: 'r', mount: [-620, 500, 170] }] })
+add({ id: 'sidestand', ko: '사이드스탠드', en: 'Sidestand', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 10, radiusBottom: 10, height: 300, segments: 10 }, rotation: [0.5, 0, 0.35] }] }, mount: [-380, 40, -200], material: 'steel', small: true })
+add({ id: 'lever', ko: '브레이크 · 클러치 레버', en: 'Brake / Clutch Lever', geometry: { type: 'box', size: [150, 12, 16] }, mount: [0, 0, 0], material: 'polished_alu', small: true,
+  instances: [{ suffix: 'clutch', mount: [topX + 40, topY + 30, -230] }, { suffix: 'brake', mount: [topX + 40, topY + 30, 230] }] })
+
 // --- L~M. 외장·도색 (Task B6) --------------------------------------------------
 
 // 빌드 ---------------------------------------------------------------------
