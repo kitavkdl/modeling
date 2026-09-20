@@ -18,6 +18,8 @@ import { resolveAlongSegment, resolveDragTargets, thresholdPx, type GhostPx, typ
 
 /** 놓쳤을 때 제자리로 돌아가는 시간 */
 const RETURN_MS = 300
+/** 림 조명이 부품 표면에 주는 조도(점광원 세기 = 조도 × 거리²) */
+const RIM_IRRADIANCE = 4.5
 
 interface DragState {
   /** 잡은 지점을 지나는, 카메라를 향한 평면 */
@@ -220,6 +222,10 @@ function Draggable({ part }: { part: PartDef }) {
   // 잡기 영역: 그려진 지오메트리의 실제 크기(Box3)에 맞추고, 너무 작으면 grabMinMm까지 키운다.
   const grabSized = useRef(false)
   const grabRetry = useRef(true)
+  /** 대기 부품을 뒤에서 비추는 림 조명. 카메라 반대편 위에 두어 윤곽이 배경에서 떨어져 보이게 한다 */
+  const rim = useRef<THREE.PointLight>(null)
+  const rimDist = useRef(3)
+  const rimTmp = useRef(new THREE.Vector3()).current
   const sizeGrab = useCallback(() => {
     const v = visual.current
     const m = grabMesh.current
@@ -232,7 +238,8 @@ function Draggable({ part }: { part: PartDef }) {
     const minSide = cfg.grabMinMm * MM
     // 렌더 그룹은 회전 없이 rest에 놓여 있으므로 월드 차이가 그대로 그룹 로컬 오프셋이다
     m.position.copy(center).sub(v.getWorldPosition(new THREE.Vector3()))
-    m.scale.set(Math.max(size.x, minSide), Math.max(size.y, minSide), Math.max(size.z, minSide))
+    rimDist.current = Math.max(2, Math.max(size.x, size.y, size.z) * 1.6)
+      m.scale.set(Math.max(size.x, minSide), Math.max(size.y, minSide), Math.max(size.z, minSide))
     return true
   }, [cfg.grabMinMm])
 
@@ -249,6 +256,14 @@ function Draggable({ part }: { part: PartDef }) {
     }
     const g = group.current
     if (!g) return
+    if (rim.current) {
+      // 카메라 → 부품 방향으로 부품 뒤쪽, 그리고 위로 띄운다. 그룹 로컬 좌표(그룹은 회전 없음)
+      rimTmp.copy(g.position).sub(camera.position).normalize().multiplyScalar(rimDist.current)
+      rimTmp.y += rimDist.current * 0.35
+      rim.current.position.copy(rimTmp)
+      rim.current.intensity = RIM_IRRADIANCE * rimDist.current * rimDist.current
+      rim.current.distance = rimDist.current * 3
+    }
     const d = drag.current
     if (d) {
       g.position.lerp(d.target, 0.5)
@@ -285,6 +300,7 @@ function Draggable({ part }: { part: PartDef }) {
       <group ref={visual}>
         <PartGeometry geometry={part.geometry} material={materials.get(part.material)} materials={materials} />
       </group>
+      <pointLight ref={rim} color="#dfe8ff" intensity={40} distance={9} decay={2} />
       {/* 잡기 영역: 렌더되지 않지만 레이캐스트에는 잡힌다 */}
       <mesh ref={grabMesh}>
         <boxGeometry args={[1, 1, 1]} />

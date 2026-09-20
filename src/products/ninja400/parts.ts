@@ -71,38 +71,23 @@ import {
 } from './spec'
 
 // 작업대 --------------------------------------------------------------------
-// 엔진 스탠드 상판은 y=270..280 이고 크랭크케이스 하부 밑면이 y=280 이라 딱 얹힌다.
-// 소품 원점은 (offset.x, 0, offset.z) 이므로 엔진 스탠드 children의 x는 크랭크 중심(-120) 기준이다.
+// 작업대 소품(벤치·스탠드)은 두지 않는다 — 검은 탁자가 장면을 어지럽혀 사용자가 뺐다(2026-09-20). 작업대 부품은
+// 오프셋 위치에 떠 있고 접촉 그림자만 남는다.
 export const STATIONS: StationDef[] = [
   {
     id: 'engine',
     nameKo: '엔진 스탠드',
     offset: [0, 0, 1100],
-    propMaterial: 'bench',
-    prop: {
-      type: 'composite',
-      children: [
-        { geometry: { type: 'box', size: [60, 270, 60] }, position: [-300, 0, -160] },
-        { geometry: { type: 'box', size: [60, 270, 60] }, position: [60, 0, -160] },
-        { geometry: { type: 'box', size: [60, 270, 60] }, position: [-300, 0, 160] },
-        { geometry: { type: 'box', size: [60, 270, 60] }, position: [60, 0, 160] },
-        { geometry: { type: 'box', size: [460, 10, 420] }, position: [-120, 270, 0] },
-      ],
-    },
   },
   {
     id: 'front_wheel',
     nameKo: '앞바퀴 벤치',
     offset: [900, 20, 600],
-    propMaterial: 'bench',
-    prop: { type: 'box', size: [500, 20, 300] },
   },
   {
     id: 'rear_wheel',
     nameKo: '뒷바퀴 벤치',
     offset: [-900, 20, 600],
-    propMaterial: 'bench',
-    prop: { type: 'box', size: [500, 20, 300] },
   },
 ]
 
