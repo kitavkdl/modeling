@@ -1,0 +1,53 @@
+{
+  "wheelbaseMm": 1370,
+  "front": {
+    "x": 685,
+    "y": 287.3,
+    "r": 287.3
+  },
+  "rear": {
+    "x": -685,
+    "y": 299,
+    "r": 299
+  },
+  "boundsMm": {
+    "min": [
+      -981.9,
+      0,
+      -420.6
+    ],
+    "max": [
+      974.4,
+      1071.5,
+      420.6
+    ]
+  },
+  "landmarksMm": {
+    "keyHole": [
+      447.2,
+      918,
+      -42.8
+    ],
+    "buttonRight": [
+      576.4,
+      846.8,
+      180.7
+    ],
+    "gripRight": [
+      396.4,
+      850.9,
+      264.5
+    ],
+    "dashboard": [
+      589.2,
+      924.5,
+      -1.4
+    ]
+  },
+  "source": {
+    "name": "Kawasaki ninja ZX-6R",
+    "author": "valvetin",
+    "url": "https://sketchfab.com/3d-models/kawasaki-ninja-zx-6r-4af2b6840b8045a5af5e8df8a85f04fa",
+    "license": "CC-BY-4.0"
+  }
+}

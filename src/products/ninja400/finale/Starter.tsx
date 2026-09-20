@@ -2,9 +2,9 @@ import { useCallback, useRef, useState, useSyncExternalStore } from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import type * as THREE from 'three'
 import { useAssembly, useAssemblyStore, useMaterials } from '../../../engine/context'
-import { MM, type Vec3 } from '../../../engine/types'
+import { MM } from '../../../engine/types'
 import * as engineSound from '../audio/engineSound'
-import { forkPoint, HEAD } from '../spec'
+import { STARTER_HOUSING } from '../render/rideLayout'
 import { clutchHeld, notifyRide, ride, subscribeRide } from './rideState'
 
 // 우측 클립온의 스위치 하우징. keyed에서 빨간 버튼을 누르면 시동이 걸린다.
@@ -14,9 +14,8 @@ import { clutchHeld, notifyRide, ride, subscribeRide } from './rideState'
 // 예외가 하나 있다: 주행 중 시동이 꺼지면(ride.stalled) phase는 running 그대로인 채
 // 버튼이 다시 튀어나오고, 그때는 여기서 직접 다시 건다. 기어가 들어간 채로는 거부한다.
 
-const [topX, topY] = forkPoint(HEAD[1])
-/** 스위치 하우징 중심 (mm) */
-const HOUSING: Vec3 = [topX - 20, topY + 60, 200]
+/** 스위치 하우징 중심 (mm) — 실물 모델에서 잰 오른쪽 스위치 뭉치 자리 */
+const HOUSING = STARTER_HOUSING
 const BUTTON_COLOR = '#b3261e'
 /** 거부됐을 때 흔들리는 시간(초)과 진폭(mm) */
 const REFUSE_S = 0.3

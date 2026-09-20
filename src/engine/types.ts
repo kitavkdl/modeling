@@ -141,6 +141,9 @@ export interface MountRecord {
   variant?: string
 }
 
+/** 장착 기록 표 (인스턴스 id → 기록) */
+export type Mounted = Record<string, MountRecord>
+
 export interface RenderInstanceCtx {
   part: PartDef
   inst: PartInstance
@@ -169,6 +172,13 @@ export interface ProductDef {
   hints: Partial<Record<string, string>>
   /** complete 이후 단계 이름, 순서대로 */
   phasesAfterComplete: string[]
+  /**
+   * true면 엔진이 장착 부품과 소품을 그리지 않는다 (제품이 그 자리에 다른 것을 그릴 때).
+   * 선택 부품의 고스트와 드래그는 그대로 살아 있다 — 숨긴 상태에서도 부품을 꽂을 수 있어야 한다.
+   */
+  assemblyHidden?: (s: { phase: string; mounted: Mounted }) => boolean
+  /** 외부 에셋 출처 표기(라이선스 의무). assembly 이후 단계에서 HUD 왼쪽 아래에 그대로 보여 준다 */
+  credits?: string
 }
 
 const MAX_DEPTH = 4

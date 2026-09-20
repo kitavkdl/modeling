@@ -2,13 +2,15 @@ import { useEffect } from 'react'
 import { useAssembly, useAssemblyStore } from '../../../engine/context'
 import { requestCameraView } from '../../../engine/scene/controlsRef'
 import * as engineSound from '../audio/engineSound'
+import { RideModel } from '../render/RideModel'
+import { IGNITION } from '../render/rideLayout'
 import { RideFog, RoadTiles } from '../render/RoadTiles'
 import { RideControls } from './RideControls'
 import { resetRide, ride } from './rideState'
 import { Starter } from './Starter'
 import { Throttle } from './Throttle'
 
-/** 키(정규 부품)를 꽂은 뒤: 시동 버튼 → 스로틀. 카메라도 여기서 옮긴다. */
+/** 키(정규 부품)를 꽂은 뒤: 시동 버튼 → 스로틀. 실물 모델과 카메라도 여기서 얹는다. */
 export function NinjaFinale() {
   // 엔진음 뱅크는 제품이 뜰 때 한 번만 받아 둔다 — 시동을 누르는 순간엔 이미 디코드가 끝나 있어야 한다.
   // (AudioContext를 만들기만 하고 깨우지는 않으므로 사용자 제스처 정책에 걸리지 않는다)
@@ -17,6 +19,7 @@ export function NinjaFinale() {
   }, [])
   return (
     <>
+      <RideModel />
       <Starter />
       <Throttle />
       <RideControls />
@@ -55,7 +58,7 @@ function FinaleCamera() {
   useEffect(() => {
     return store.subscribe((s, prev) => {
       if (s.phase === prev.phase) return
-      if (s.phase === 'keyed') requestCameraView({ azimuth: 15, polar: 55, distance: 2400 }, [520, 950, 0])
+      if (s.phase === 'keyed') requestCameraView({ azimuth: 15, polar: 55, distance: 2400 }, IGNITION)
       // running: 뒤 왼쪽 3/4 낮은 시점(azimuth 90 = 정면, 270 = 정후방 · 215면 왼쪽 뒤). 바닥이 흘러가는 것이 보인다
       else if (s.phase === 'running') requestCameraView({ azimuth: 215, polar: 72, distance: 3400 }, [0, 600, 0])
     })

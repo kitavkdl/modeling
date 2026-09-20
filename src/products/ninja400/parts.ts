@@ -53,6 +53,7 @@ import {
   windscreenGeometry,
 } from './geometry'
 import { PAINT_VARIANTS } from './materials'
+import { IGNITION } from './render/rideLayout'
 import {
   CRANK,
   FORK_LEN,
@@ -294,16 +295,19 @@ add({ id: 'coolant_reservoir', ko: '리저브 탱크', en: 'Coolant Reservoir', 
 add({ id: 'battery', ko: '배터리', en: 'Battery', geometry: { type: 'box', size: [140, 100, 90] }, mount: [-560, 620, 0], material: 'plastic_black', small: true, camera: { azimuth: -30, polar: 55, distance: 2600, target: [-500, 700, 0] } })
 add({ id: 'ecu', ko: 'ECU', en: 'ECU', geometry: { type: 'box', size: [120, 30, 100] }, mount: [-650, 720, 0], material: 'plastic_black', small: true })
 // 계기판과 점화 키. 키 실린더는 계기판의 자식이라, 계기판 기울기를 되돌린 로컬 좌표에 둬야
-// 보어가 수직으로 서고 키 부품 마운트와 정확히 겹친다. parts.test.ts가 이 관계를 지킨다.
+// 보어가 수직으로 선다. parts.test.ts가 이 관계를 지킨다.
+// 점화 키 부품 자체는 절차 계기판이 아니라 실물 모델의 키 구멍(IGNITION)에 꽂는다 —
+// 키가 마지막 하나로 남는 순간 절차 조립체는 사라지고 그 자리에 실물 모델이 서 있다.
 const CLUSTER_MOUNT: Vec3 = [500, 948, 0]
 const CLUSTER_TILT = -0.5
-const KEY_MOUNT: Vec3 = [540, 980, 60]
+/** 절차 계기판에 달린 키 실린더 위치 (mm) — 실물 모델의 키 구멍과는 별개다 */
+export const CLUSTER_KEY_MOUNT: Vec3 = [540, 980, 60]
 const CLUSTER_KEY_LOCAL: Vec3 = (() => {
-  const dx = KEY_MOUNT[0] - CLUSTER_MOUNT[0]
-  const dy = KEY_MOUNT[1] - CLUSTER_MOUNT[1]
+  const dx = CLUSTER_KEY_MOUNT[0] - CLUSTER_MOUNT[0]
+  const dy = CLUSTER_KEY_MOUNT[1] - CLUSTER_MOUNT[1]
   const c = Math.cos(CLUSTER_TILT)
   const s = Math.sin(CLUSTER_TILT)
-  return [dx * c + dy * s, dy * c - dx * s, KEY_MOUNT[2]]
+  return [dx * c + dy * s, dy * c - dx * s, CLUSTER_KEY_MOUNT[2]]
 })()
 add({ id: 'instrument_cluster', ko: '계기판', en: 'Instrument Cluster', geometry: clusterGeometry(CLUSTER_KEY_LOCAL, -CLUSTER_TILT),
   mount: CLUSTER_MOUNT, rot: [0, 0, CLUSTER_TILT], material: 'plastic_black', small: true, camera: { azimuth: -50, polar: 40, distance: 1800, target: [510, 960, 10] } })
@@ -374,9 +378,9 @@ add({ id: 'mirror', ko: '미러', en: 'Mirror', geometry: mirrorGeometry(1), mou
   ] })
 add({ id: 'paint', ko: '도색', en: 'Paint', geometry: { type: 'box', size: [10, 10, 10] }, mount: [0, 0, 0], material: 'primer', hidden: true, variants: PAINT_VARIANTS, hint: '도색', camera: { azimuth: 30, polar: 62, distance: 4000, target: [0, 600, 0] } })
 // 도색까지 끝나면 마지막으로 키를 꽂는다 — 정규 부품 81번째. 다 장착되면 phase가 assembly에서 바로 keyed로 넘어간다.
-add({ id: 'ignition_key', ko: '키', en: 'Ignition Key', geometry: keyGeometry(), mount: KEY_MOUNT, rot: [0, 0, 0], material: 'steel',
+add({ id: 'ignition_key', ko: '키', en: 'Ignition Key', geometry: keyGeometry(), mount: IGNITION, rot: [0, 0, 0], material: 'steel',
   requires: ['paint'], small: true, hint: '키 삽입', phaseOnMount: 'keyed',
-  camera: { azimuth: -55, polar: 38, distance: 1000, target: [520, 960, 30] } })
+  camera: { azimuth: -55, polar: 38, distance: 1000, target: IGNITION } })
 
 // 빌드 ---------------------------------------------------------------------
 function build(): PartDef[] {

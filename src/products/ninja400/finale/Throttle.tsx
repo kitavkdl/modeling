@@ -4,17 +4,14 @@ import type * as THREE from 'three'
 import { useAssembly, useMaterials } from '../../../engine/context'
 import { clamp01 } from '../../../engine/easing'
 import { cancelCameraTween, setControlsEnabled } from '../../../engine/scene/controlsRef'
-import { MM, type Vec3 } from '../../../engine/types'
-import { forkPoint, HEAD } from '../spec'
+import { MM } from '../../../engine/types'
+import { GRIP } from '../render/rideLayout'
 import { ride } from './rideState'
 
 // 우측 그립. 누른 채 화면 위로 끌면 스로틀이 열린다. 값 자체는 rideModel이 굴리고
 // (키보드 ↑와 큰 쪽이 이긴다) 여기서는 ride.throttleMouse만 쓰고 ride.throttle을 보여 준다.
-// clip_on:r 인스턴스는 z=110에 있고 고무 그립은 그 안에서 110~230 구간이므로 월드 중심은 z=280이다.
+// 그립 중심(GRIP, mm)은 실물 모델에서 잰 오른쪽 그립 자리다 (render/rideLayout.ts).
 
-const [topX, topY] = forkPoint(HEAD[1])
-/** 그립 중심 (mm) */
-const GRIP: Vec3 = [topX - 20, topY + 20, 280]
 const GRIP_LEN = 120
 /** 슬리브는 clip_on 고무 그립보다 2mm 짧게 — 끝면이 겹쳐 z-파이팅하지 않도록 */
 const SLEEVE_LEN = 118

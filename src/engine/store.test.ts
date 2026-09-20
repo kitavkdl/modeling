@@ -1,13 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PARTS, PART_BY_ID } from '../products/keyboard/parts'
 import { keyboardProduct as product } from '../products/keyboard'
-import type { PartDef, ProductDef } from './types'
+import type { Mounted, PartDef, ProductDef } from './types'
 import {
   availableParts,
   canSkip,
   canUndo,
   createAssemblyStore,
   isAssemblyComplete,
+  isAssemblyHidden,
   isStationSeated,
   stationOffset,
   validateProduct,
@@ -358,5 +359,33 @@ describe('validateProduct', () => {
     const messages = validateProduct(broken)
     expect(messages).toHaveLength(1)
     expect(messages[0]).toContain('orphan')
+  })
+})
+
+describe('isAssemblyHidden', () => {
+  it('훅이 없으면 숨기지 않는다', () => {
+    const store = createAssemblyStore(tinyProduct())
+    expect(isAssemblyHidden(store.getState().product, store.getState())).toBe(false)
+  })
+
+  it('훅에 현재 phase와 장착표를 넘기고 그 결과를 그대로 쓴다', () => {
+    const seen: Array<{ phase: string; mounted: Mounted }> = []
+    const base = tinyProduct(true)
+    const hidden: ProductDef = {
+      ...base,
+      assemblyHidden: (s) => {
+        seen.push(s)
+        return s.phase !== 'assembly'
+      },
+    }
+    const store = createAssemblyStore(hidden)
+    expect(isAssemblyHidden(hidden, store.getState())).toBe(false)
+    store.getState().mount('b:0')
+    store.getState().mount('b:1')
+    store.getState().mount('c') // 마지막 부품 → phaseOnMount로 keyed
+    expect(store.getState().phase).toBe('keyed')
+    expect(isAssemblyHidden(hidden, store.getState())).toBe(true)
+    expect(seen[seen.length - 1].mounted['c']).toBeDefined()
+    expect(seen.map((s) => s.phase)).toContain('assembly')
   })
 })

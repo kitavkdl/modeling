@@ -2,7 +2,8 @@ import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
 import type { CompositeChild, Vec3 } from '../../engine/types'
 import { validateGeometry } from '../../engine/types'
-import { PARTS, PART_BY_ID, PROPS, STATIONS } from './parts'
+import { CLUSTER_KEY_MOUNT, PARTS, PART_BY_ID, PROPS, STATIONS } from './parts'
+import { IGNITION } from './render/rideLayout'
 import { MAIN_SPAR_RADIUS, TANK_SECTIONS, mainSparPath, sectionAt, tailHalfWidthAt } from './geometry'
 import { NINJA_MATERIALS } from './materials'
 import { assemblyBounds, instanceBounds, partTubeSamples, tubeSamples } from './test-utils'
@@ -429,7 +430,7 @@ describe('ninja400 parts', () => {
     expect(cowl.min[1]).toBeLessThan(radiator.min[1])
     expect(cowl.max[1]).toBeGreaterThan(radiator.max[1])
   })
-  it('계기판 키 실린더가 점화 키 마운트에 수직으로 맞는다', () => {
+  it('계기판 키 실린더가 계기판 키 위치에 수직으로 선다', () => {
     const cluster = PART_BY_ID.instrument_cluster
     const g = cluster.geometry
     if (g.type !== 'composite') throw new Error('cluster geometry must be composite')
@@ -443,7 +444,9 @@ describe('ninja400 parts', () => {
     child.rotation.fromArray(bore.rotation)
     root.add(child)
     root.updateMatrixWorld(true)
-    expect(child.getWorldPosition(new THREE.Vector3()).distanceTo(vec(PART_BY_ID.ignition_key.mountPosition))).toBeLessThan(1)
+    // 점화 키 부품은 실물 모델의 키 구멍(IGNITION)으로 옮겼으므로 절차 계기판 쪽 값과 비교한다
+    expect(child.getWorldPosition(new THREE.Vector3()).distanceTo(vec(CLUSTER_KEY_MOUNT))).toBeLessThan(1)
+    expect(PART_BY_ID.ignition_key.mountPosition).toEqual(IGNITION)
     // 보어가 수직이라 키를 위에서 꽂는다
     const axis = new THREE.Vector3(0, 1, 0).applyQuaternion(child.getWorldQuaternion(new THREE.Quaternion()))
     expect(axis.angleTo(new THREE.Vector3(0, 1, 0))).toBeLessThan(1e-6)

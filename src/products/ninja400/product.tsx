@@ -3,6 +3,7 @@ import type { ProductDef } from '../../engine/types'
 import { NinjaFinale } from './finale/Finale'
 import { RideGauge } from './finale/RideGauge'
 import { NINJA_MATERIALS } from './materials'
+import { onlyKeyLeft } from './onlyKeyLeft'
 import { PARTS, PROPS, STATIONS } from './parts'
 import { EngineShake } from './render/EngineShake'
 import { Lamps } from './render/Lamps'
@@ -46,4 +47,8 @@ export const ninja400Product: ProductDef = {
   },
   hints: { keyed: '시동', running: '스로틀 개방' },
   phasesAfterComplete: ['keyed', 'running'],
+  // 키 하나만 남는 순간부터 절차 조립체를 감춘다 — 그 자리에 실물 모델(RideModel)이 서고
+  // 키는 실물 모델의 키 구멍에 꽂는다. 고스트와 드래그는 엔진이 그대로 살려 둔다.
+  assemblyHidden: (s) => s.phase !== 'assembly' || onlyKeyLeft(s.mounted, PARTS),
+  credits: '모델 Kawasaki ninja ZX-6R · valvetin · CC BY 4.0 / 엔진음 AlexanderChe, brucehep · freesound · CC0',
 }

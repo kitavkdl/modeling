@@ -1,7 +1,7 @@
 import { createStore, type StoreApi } from 'zustand/vanilla'
-import type { MountRecord, PartDef, PartInstance, Phase, ProductDef, Vec3 } from './types'
+import type { Mounted, MountRecord, PartDef, PartInstance, Phase, ProductDef, Vec3 } from './types'
 
-export type Mounted = Record<string, MountRecord>
+export type { Mounted }
 
 export interface AssemblyState {
   product: ProductDef
@@ -83,6 +83,14 @@ export function isStationSeated(product: ProductDef, mounted: Mounted, stationId
   const marry = product.parts.filter((p) => p.marries === stationId)
   if (marry.length === 0) return true
   return marry.every((p) => isPartComplete(mounted, p))
+}
+
+/**
+ * 제품이 조립체를 숨기라고 하는가 (ProductDef.assemblyHidden). 훅이 없으면 숨기지 않는다.
+ * Assembly가 이 값으로 장착 부품과 소품만 끄고, 고스트는 계속 그린다.
+ */
+export function isAssemblyHidden(product: ProductDef, s: { phase: Phase; mounted: Mounted }): boolean {
+  return product.assemblyHidden?.({ phase: s.phase, mounted: s.mounted }) ?? false
 }
 
 /** 부품이 작업대 소속이고 아직 결합 전이면 작업대 오프셋, 아니면 0 */
