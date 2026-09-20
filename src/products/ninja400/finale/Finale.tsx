@@ -10,6 +10,11 @@ import { Throttle } from './Throttle'
 
 /** 키(정규 부품)를 꽂은 뒤: 시동 버튼 → 스로틀. 카메라도 여기서 옮긴다. */
 export function NinjaFinale() {
+  // 엔진음 뱅크는 제품이 뜰 때 한 번만 받아 둔다 — 시동을 누르는 순간엔 이미 디코드가 끝나 있어야 한다.
+  // (AudioContext를 만들기만 하고 깨우지는 않으므로 사용자 제스처 정책에 걸리지 않는다)
+  useEffect(() => {
+    void engineSound.preload()
+  }, [])
   return (
     <>
       <Starter />

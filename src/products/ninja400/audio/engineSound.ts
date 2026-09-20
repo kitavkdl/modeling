@@ -1,343 +1,333 @@
-// 엔진 사운드 v2 — 오디오 파일 없이 Web Audio API로 합성한다.
-// 4행정 병렬 2기통(180° 크랭크)은 720° 한 주기에 0°와 180°에서 점화한다.
-// 그래서 주기 P = 120/rpm 초 안에 점화가 두 번, [0, P/4] 위치에 불균등하게 놓인다.
-// 점화 하나 = 짧은 임펄스(사각 0.6ms + 지수 감쇠를 건 노이즈 + 사인). 이 임펄스를
-// 배기 공명 뱅크(밴드패스 ×3) → 머플러 저역통과에 통과시켜 "두둥" 소리를 만든다.
-// 여기에 스로틀에 비례하는 흡기 노이즈와 기계음(기어 휘인)을 상시로 섞는다.
-// rpm은 바깥(주행 모델)에서 setRpm으로 들어온다. 하우징 울림은 키보드 switchSound와 같은 2탭 딜레이.
+// 엔진 사운드 v3 — 합성을 버리고 실녹음 루프(public/audio/ninja400/engine/)를 크로스페이드한다.
+// 뱅크는 rpm 사다리(1330~6460)로 잘라 둔 이음매 없는 모노 루프 + 시동·정지 원샷이다.
+// 그래프:
+//   루프 슬롯 A ─ gainA ┐
+//   루프 슬롯 B ─ gainB ┴→ loopBus ─→ tone(lowpass) ─→ toneGain ─→ master ─→ compressor ─→ destination
+//   start.ogg / stop.ogg 원샷 ───────────────────────────────────→ master ┘
+// 매 tick(25 ms)마다 rpm을 감싸는 루프 두 개를 bankMix로 고르고, 각 소스의 playbackRate를
+// rpm/루프rpm으로 끌고 가면서 등파워(cos/sin)로 섞는다. 최고 루프 위(6460~12000)는 그대로
+// 피치업(최대 1.86배)하고, 비율에 상한을 두지 않는다.
+// rpm은 바깥(주행 모델)에서 setRpm으로 들어온다.
 
-// 회전수 기준값은 주행 모델 하나만 가진다 (여기서 다시 선언하면 둘이 어긋난다)
-import { IDLE_RPM, MAX_RPM } from '../finale/rideModel'
+import { IDLE_RPM } from '../finale/rideModel'
+import { bankMix, type Loop } from './bankMix'
 
-/** 예약을 미리 걸어 두는 구간 */
-const LOOKAHEAD_S = 0.1
-/** 예약 타이머 주기 */
+/** 뱅크가 놓인 곳 (Vite가 public/ 그대로 복사한다) */
+const BANK_DIR = '/audio/ninja400/engine/'
+/** 슬롯 갱신 주기 (ms) */
 const TICK_MS = 25
-
-const MASTER_GAIN = 0.45
-/** stop()의 페이드아웃 시간 */
+/** 최종 출력 배율 — 루프는 −18 dBFS RMS로 정규화돼 있다 */
+const MASTER_GAIN = 0.8
+/** stop()의 루프 페이드아웃 (초) */
 const STOP_FADE_S = 0.15
-
-/** 점화 임펄스: 사각으로 버티는 구간 0.6ms */
-const PULSE_HOLD_S = 0.0006
-const PULSE_GAIN = 0.5
-/** 임펄스 안에서 노이즈가 차지하는 비율 (사인은 1) */
-const PULSE_NOISE_MIX = 0.7
-/** 점화 시각·세기가 흔들리는 폭 — 주기의 ±1.5%, 세기 ±10% */
-const JITTER_FRAC = 0.03
-const AMP_JITTER = 0.2
-
-/** 배기 공명 뱅크의 각 밴드패스 출력 */
-const BAND_GAIN = 0.5
-/** 필터·게인을 목표로 끌고 가는 시정수 */
+/** start.ogg가 점화에 닿는 시점(초)과 루프 페이드인 길이(초) */
+const START_DELAY_S = 0.8
+const START_FADE_S = 0.3
+/** 슬롯을 갈아 끼울 때 옛 소스를 지우는 시간 (초) */
+const SLOT_FADE_S = 0.03
+/** playbackRate·슬롯 게인 시정수(초)와 톤(lowpass·게인) 시정수(초) */
+const RATE_TAU = 0.02
 const TONE_TAU = 0.05
-/** 스로틀 1에서의 흡기 노이즈 게인 */
-const INTAKE_GAIN = 0.25
-/** 기계음: 기어 휘인 (사인 톱니 → 1500Hz 하이패스) */
-const WHINE_GAIN = 0.02
-const WHINE_HPF_HZ = 1500
-/** 크랭크 한 바퀴에 몇 번 물리는가 — 휘인 주파수 = rpm × 6 / 60 */
-const WHINE_ORDER = 6
-
-/** blip()이 흡기를 들어올리는 높이와 길이 */
-const BLIP_GAIN = 0.35
+/** 머플러 저역통과 (Hz): 스로틀 0 → 1400, 1 → 6000 */
+const TONE_HZ_BASE = 1400
+const TONE_HZ_SPAN = 4600
+/** 톤 게인 (dB): 스로틀 0 → −5, 1 → 0, 부하 1이면 +3 */
+const TONE_DB_BASE = -5
+const TONE_DB_THROTTLE = 5
+const TONE_DB_LOAD = 3
+/** blip(): 톤 게인 +4 dB, 8 ms 상승 · 40 ms 유지 · 60 ms 하강 */
+const BLIP_DB = 4
+const BLIP_ATTACK_S = 0.008
 const BLIP_HOLD_S = 0.04
 const BLIP_RELEASE_S = 0.06
 
-/** 아이들 근처에서만 흔들리는 폭과 속도 */
-const WOBBLE = 0.04
-const WOBBLE_HZ = 7
-/** 아이들의 이 배율까지만 흔든다 */
-const WOBBLE_TOP = 1.15
-
-const DELAY_TAPS: Array<{ timeMs: number; gain: number }> = [
-  { timeMs: 11, gain: 0.22 },
-  { timeMs: 23, gain: 0.12 },
-]
-
 const clamp01 = (t: number) => (Number.isFinite(t) ? (t < 0 ? 0 : t > 1 ? 1 : t) : 0)
+const dbToGain = (db: number) => Math.pow(10, db / 20)
 
-/** 배기 공명 — 스로틀을 열수록 공명점이 15% 올라가고 Q가 서며 머플러가 열린다 */
-export function resonanceFor(throttle: number): { freqs: [number, number, number]; q: number; lowpassHz: number } {
-  const t = clamp01(throttle)
-  // f * (1 + 0.15t)가 아니라 f + f*0.15t로 쓴다 — 전자는 190에서 218.4999…가 되어 반올림이 한 칸 내려간다
-  const lift = (f: number) => f + f * 0.15 * t
-  return { freqs: [lift(95), lift(190), lift(285)], q: 6 + 4 * t, lowpassHz: 1200 + 1400 * t }
+/** 회전수 정리 — 유한하지 않거나 0 이하(시동 꺼짐·스톨)면 0, 그때는 루프를 아예 내린다 */
+export function safeRpm(rpm: number): number {
+  return Number.isFinite(rpm) && rpm > 0 ? rpm : 0
 }
 
-/** 점화 하나의 엔벨로프 — rpm이 오를수록 짧고(20ms→8ms), 부하가 걸리면 세다 */
-export function pulseFor(rpm: number, load: number): { decayS: number; gain: number } {
-  const t = clamp01((rpm - IDLE_RPM) / (MAX_RPM - IDLE_RPM))
-  return { decayS: 0.02 - 0.012 * t, gain: PULSE_GAIN * (1 + 0.3 * clamp01(load)) }
-}
-
-/** [from, to) 구간의 점화 시각(초). 720° 주기 P = 120/rpm, 각 주기에 0과 P/4 */
-export function firingTimes(rpm: number, from: number, to: number): number[] {
-  const out: number[] = []
-  if (!(rpm > 0) || !(to > from)) return out
-  const P = 120 / rpm
-  for (let k = Math.floor(from / P); k * P < to; k++) {
-    for (const f of [0, 0.25]) {
-      const t = (k + f) * P
-      if (t >= from && t < to) out.push(t)
-    }
+/** 스로틀·부하가 정하는 머플러 저역통과와 톤 게인(선형) */
+export function toneFor(throttle: number, load: number): { lowpassHz: number; gain: number } {
+  const th = clamp01(throttle)
+  return {
+    lowpassHz: TONE_HZ_BASE + TONE_HZ_SPAN * th,
+    gain: dbToGain(TONE_DB_BASE + TONE_DB_THROTTLE * th + TONE_DB_LOAD * clamp01(load)),
   }
-  return out
 }
+
+/** 등파워 크로스페이드 — 두 게인의 제곱합이 1이라 합쳐도 소리가 꺼지거나 부풀지 않는다 */
+export function loopGains(t: number): { lower: number; upper: number } {
+  const k = (clamp01(t) * Math.PI) / 2
+  return { lower: Math.cos(k), upper: Math.sin(k) }
+}
+
+interface Bank { loops: Loop[]; buffers: AudioBuffer[]; start: AudioBuffer | null; stop: AudioBuffer | null }
+interface Slot { index: number; src: AudioBufferSourceNode; gain: GainNode }
 
 let ctx: AudioContext | null = null
 let master: GainNode | null = null
-/** 점화 임펄스가 들어가는 입구 — 여기서 공명 뱅크로 갈라진다 */
-let exhaustIn: GainNode | null = null
-let bands: BiquadFilterNode[] = []
-let mufflerLPF: BiquadFilterNode | null = null
-let intakeBPF: BiquadFilterNode | null = null
-let intakeGain: GainNode | null = null
-let whine: OscillatorNode | null = null
-let noiseBuffer: AudioBuffer | null = null
+/** 루프만 지나가는 버스 — start/stop 페이드가 여기에 걸린다 (원샷은 영향받지 않는다) */
+let loopBus: GainNode | null = null
+let toneLPF: BiquadFilterNode | null = null
+let toneGain: GainNode | null = null
+/** [0] = lower 루프, [1] = upper 루프. 둘이 같은 인덱스면 [1]은 비운다 */
+const slots: Array<Slot | null> = [null, null]
+
+let bank: Bank | null = null
+let bankPromise: Promise<void> | null = null
+const warned = { load: false, cold: false }
 let timer: ReturnType<typeof setInterval> | null = null
-/** 여기까지 예약이 끝났다 (AudioContext 시계) */
-let cursor = 0
+let suspendTimer: ReturnType<typeof setTimeout> | null = null
 /** 스로틀 0~1 */
 let level = 0
-/** 바깥에서 받은 회전수. 0 이하면 아무것도 예약하지 않는다 */
+/** 바깥에서 받은 회전수. 0이면 루프를 내린다 */
 let rpmLevel = 0
 /** 물린 기어가 거는 부하 0~1 */
 let loadLevel = 0
-/** blip() 제스처가 끝나는 시각 — 그때까지 tick()은 흡기 게인을 건드리지 않는다 */
+/** blip() 제스처가 끝나는 시각 — 그때까지 tick()은 톤 게인을 건드리지 않는다 */
 let blipUntil = 0
-/** stop() 페이드가 끝난 뒤 ctx.suspend()를 걸어 둔 타이머 */
-let suspendTimer: ReturnType<typeof setTimeout> | null = null
 
-/** 탭이 백그라운드로 가면 재생을 멈추고, 돌아오면 밀린 예약을 버리고 현재 시각부터 다시 스케줄한다 */
+function warnOnce(key: 'load' | 'cold', message: string, err?: unknown) {
+  if (warned[key]) return
+  warned[key] = true
+  console.warn(`[engineSound] ${message}`, err ?? '')
+}
+
+/** 탭이 백그라운드로 가면 멈추고, 돌아오면 깨운다. stop()이 재운 컨텍스트는 깨우지 않는다 */
 function handleVisibilityChange() {
   if (!ctx) return
   if (document.hidden) {
     if (timer !== null) void ctx.suspend()
   } else if (timer !== null && ctx.state === 'suspended') {
-    // 돌고 있던 엔진만 깨운다. stop()이 재운 컨텍스트를 여기서 깨우면
-    // 게인 0짜리 흡기 노이즈와 기계음 오실레이터가 조용히 계속 돈다.
-    void ctx.resume().then(() => {
-      if (ctx) cursor = ctx.currentTime
-    })
+    void ctx.resume()
   }
 }
 
-function makeNoise(ac: AudioContext, seconds: number): AudioBuffer {
-  const len = Math.ceil(ac.sampleRate * seconds)
-  const buf = ac.createBuffer(1, len, ac.sampleRate)
-  const data = buf.getChannelData(0)
-  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1
-  return buf
-}
-
-function ensureContext(): AudioContext | null {
+/** 컨텍스트와 그래프를 만들기만 한다 — resume은 하지 않는다 (사용자 제스처 전에는 금지) */
+function audioContext(): AudioContext | null {
   if (typeof window === 'undefined') return null
   const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
   if (!AC) return null
-  if (!ctx) {
-    ctx = new AC()
-    master = ctx.createGain()
-    master.gain.value = MASTER_GAIN
+  if (ctx) return ctx
+  ctx = new AC()
+  const compressor = ctx.createDynamicsCompressor()
+  compressor.connect(ctx.destination)
+  master = ctx.createGain()
+  master.gain.value = MASTER_GAIN
+  master.connect(compressor)
 
-    const compressor = ctx.createDynamicsCompressor()
-    compressor.connect(ctx.destination)
+  const tone = toneFor(0, 0)
+  toneGain = ctx.createGain()
+  toneGain.gain.value = tone.gain
+  toneGain.connect(master)
+  toneLPF = ctx.createBiquadFilter()
+  toneLPF.type = 'lowpass'
+  toneLPF.frequency.value = tone.lowpassHz
+  toneLPF.connect(toneGain)
+  loopBus = ctx.createGain()
+  loopBus.gain.value = 0
+  loopBus.connect(toneLPF)
 
-    const dry = ctx.createGain()
-    dry.gain.value = 1
-    master.connect(dry)
-    dry.connect(compressor)
-    for (const tap of DELAY_TAPS) {
-      const delay = ctx.createDelay(0.1)
-      delay.delayTime.value = tap.timeMs / 1000
-      const g = ctx.createGain()
-      g.gain.value = tap.gain
-      master.connect(delay)
-      delay.connect(g)
-      g.connect(compressor)
-    }
-
-    // 배기: 임펄스 → 공명 뱅크(밴드패스 ×3) → 머플러 저역통과 → 마스터
-    const tone = resonanceFor(0)
-    mufflerLPF = ctx.createBiquadFilter()
-    mufflerLPF.type = 'lowpass'
-    mufflerLPF.frequency.value = tone.lowpassHz
-    mufflerLPF.connect(master)
-    exhaustIn = ctx.createGain()
-    exhaustIn.gain.value = 1
-    bands = tone.freqs.map((f) => {
-      const bp = ctx!.createBiquadFilter()
-      bp.type = 'bandpass'
-      bp.frequency.value = f
-      bp.Q.value = tone.q
-      const g = ctx!.createGain()
-      g.gain.value = BAND_GAIN
-      exhaustIn!.connect(bp)
-      bp.connect(g)
-      g.connect(mufflerLPF!)
-      return bp
-    })
-
-    // 흡기: 루프 노이즈 → 밴드패스 → 스로틀에 비례하는 게인
-    intakeBPF = ctx.createBiquadFilter()
-    intakeBPF.type = 'bandpass'
-    intakeBPF.frequency.value = 400
-    intakeBPF.Q.value = 0.8
-    intakeGain = ctx.createGain()
-    intakeGain.gain.value = 0
-    const intake = ctx.createBufferSource()
-    intake.buffer = makeNoise(ctx, 2)
-    intake.loop = true
-    intake.connect(intakeBPF)
-    intakeBPF.connect(intakeGain)
-    intakeGain.connect(master)
-    intake.start()
-
-    // 기계음: 톱니 → 하이패스 → 아주 작은 게인
-    whine = ctx.createOscillator()
-    whine.type = 'sawtooth'
-    whine.frequency.value = 0
-    const whineHPF = ctx.createBiquadFilter()
-    whineHPF.type = 'highpass'
-    whineHPF.frequency.value = WHINE_HPF_HZ
-    const whineGain = ctx.createGain()
-    whineGain.gain.value = WHINE_GAIN
-    whine.connect(whineHPF)
-    whineHPF.connect(whineGain)
-    whineGain.connect(master)
-    whine.start()
-
-    noiseBuffer = makeNoise(ctx, 0.1)
-
-    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', handleVisibilityChange)
-  }
-  if (ctx.state === 'suspended') void ctx.resume()
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', handleVisibilityChange)
   return ctx
 }
 
-/** 아이들 근처에서만 ±4%로 흔든다. 회전을 올리면 흔들림이 사라진다 */
-function wobbled(rpm: number, now: number): number {
-  if (!(rpm > 0)) return 0
-  const near = clamp01((IDLE_RPM * WOBBLE_TOP - rpm) / (IDLE_RPM * (WOBBLE_TOP - 1)))
-  return rpm * (1 + WOBBLE * near * Math.sin(now * WOBBLE_HZ))
+/** 사용자 제스처 뒤에 부른다 — 만들고 깨운다 */
+function ensureContext(): AudioContext | null {
+  const ac = audioContext()
+  if (ac && ac.state === 'suspended') void ac.resume()
+  return ac
 }
 
-/** 점화 하나를 at 시각에 예약한다 */
-function scheduleFiring(at: number, throttle: number, rpm: number, load: number) {
+async function fetchBuffer(ac: AudioContext, url: string): Promise<AudioBuffer> {
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`${url} → ${res.status}`)
+  return await ac.decodeAudioData(await res.arrayBuffer())
+}
+
+/** bank.json과 모든 ogg를 받아 디코드한다. 한 번만 돌고, 실패하면 경고 한 줄 남기고 조용히 끝낸다 */
+export function preload(): Promise<void> {
+  if (bankPromise) return bankPromise
+  bankPromise = (async () => {
+    const ac = audioContext()
+    if (!ac) return
+    try {
+      const res = await fetch(`${BANK_DIR}bank.json`)
+      if (!res.ok) throw new Error(`bank.json → ${res.status}`)
+      const json = (await res.json()) as { loops: Loop[]; start: string; stop: string }
+      const files = [...json.loops.map((l) => l.file), json.start, json.stop]
+      const bufs = await Promise.all(files.map((f) => fetchBuffer(ac, BANK_DIR + f)))
+      const n = json.loops.length
+      bank = { loops: json.loops, buffers: bufs.slice(0, n), start: bufs[n] ?? null, stop: bufs[n + 1] ?? null }
+    } catch (err) {
+      warnOnce('load', '뱅크를 불러오지 못했다 — 엔진음 없이 진행한다', err)
+    }
+  })()
+  return bankPromise
+}
+
+/** 원샷(시동·정지)은 톤을 거치지 않고 master로 바로 간다 */
+function playOneShot(buf: AudioBuffer | null | undefined) {
   const ac = ctx
-  if (!ac || !exhaustIn || !noiseBuffer) return
-  const { decayS, gain } = pulseFor(rpm, load)
-  const amp = gain * (1 - AMP_JITTER / 2 + Math.random() * AMP_JITTER)
-
-  const env = ac.createGain()
-  const hold = at + PULSE_HOLD_S
-  const end = hold + decayS
-  env.gain.setValueAtTime(0.0001, at)
-  env.gain.linearRampToValueAtTime(amp, at + 0.0002)
-  env.gain.setValueAtTime(amp, hold)
-  env.gain.exponentialRampToValueAtTime(0.0005, end)
-  env.connect(exhaustIn)
-
-  const osc = ac.createOscillator()
-  osc.type = 'sine'
-  osc.frequency.value = 60 + clamp01(throttle) * 50
-  osc.connect(env)
-  osc.start(at)
-  osc.stop(end + 0.01)
-
+  if (!ac || !master || !buf) return
   const src = ac.createBufferSource()
-  src.buffer = noiseBuffer
-  const nGain = ac.createGain()
-  nGain.gain.value = PULSE_NOISE_MIX
-  src.connect(nGain)
-  nGain.connect(env)
-  src.start(at)
-  src.stop(end + 0.01)
+  src.buffer = buf
+  src.connect(master)
+  src.onended = () => src.disconnect()
+  src.start()
 }
 
-/** 상시 소리(공명·흡기·기계음)를 지금 값으로 끌고 간다 */
+/** 옛 소스를 30 ms에 걸쳐 지우고 끊는다 */
+function retire(slot: Slot, now: number) {
+  const g = slot.gain.gain
+  g.cancelScheduledValues(now)
+  g.setValueAtTime(g.value, now)
+  g.linearRampToValueAtTime(0.0001, now + SLOT_FADE_S)
+  slot.src.onended = () => {
+    slot.src.disconnect()
+    slot.gain.disconnect()
+  }
+  try {
+    slot.src.stop(now + SLOT_FADE_S + 0.02)
+  } catch {
+    /* 이미 멈춘 소스 */
+  }
+}
+
+function releaseSlot(i: number, now: number) {
+  const slot = slots[i]
+  if (!slot) return
+  retire(slot, now)
+  slots[i] = null
+}
+
+/** 슬롯 i에 index 루프를 임의 오프셋에서 새로 건다 */
+function startSlot(i: number, index: number, rate: number, now: number) {
+  const ac = ctx
+  if (!ac || !loopBus || !bank) return
+  const buffer = bank.buffers[index]
+  if (!buffer) return
+  releaseSlot(i, now)
+  const gain = ac.createGain()
+  gain.gain.value = 0
+  gain.connect(loopBus)
+  const src = ac.createBufferSource()
+  src.buffer = buffer
+  src.loop = true
+  src.playbackRate.value = rate
+  src.connect(gain)
+  // 같은 루프를 두 슬롯이 물어도 위상이 겹치지 않도록 임의 지점에서 시작한다
+  src.start(now, Math.random() * buffer.duration)
+  slots[i] = { index, src, gain }
+}
+
+/** 스로틀·부하가 정하는 톤을 지금 값으로 끌고 간다 */
 function updateTone(now: number) {
-  const { freqs, q, lowpassHz } = resonanceFor(level)
-  bands.forEach((bp, i) => {
-    bp.frequency.setTargetAtTime(freqs[i], now, TONE_TAU)
-    bp.Q.setTargetAtTime(q, now, TONE_TAU)
-  })
-  mufflerLPF?.frequency.setTargetAtTime(lowpassHz, now, TONE_TAU)
-  intakeBPF?.frequency.setTargetAtTime(400 + 500 * clamp01(rpmLevel / MAX_RPM), now, TONE_TAU)
-  whine?.frequency.setTargetAtTime((rpmLevel * WHINE_ORDER) / 60, now, TONE_TAU)
-  if (now >= blipUntil) intakeGain?.gain.setTargetAtTime(level * level * INTAKE_GAIN, now, TONE_TAU)
+  const { lowpassHz, gain } = toneFor(level, loadLevel)
+  toneLPF?.frequency.setTargetAtTime(lowpassHz, now, TONE_TAU)
+  if (now >= blipUntil) toneGain?.gain.setTargetAtTime(gain, now, TONE_TAU)
 }
 
 function tick() {
   const ac = ctx
-  if (!ac || !master) return
+  if (!ac) return
   const now = ac.currentTime
   updateTone(now)
-  if (cursor < now) cursor = now
-  const horizon = now + LOOKAHEAD_S
-  if (horizon <= cursor) return
-  const rpm = wobbled(rpmLevel, now)
-  if (rpm > 0) {
-    const jitterS = (120 / rpm) * JITTER_FRAC
-    for (const at of firingTimes(rpm, cursor, horizon)) {
-      scheduleFiring(Math.max(at + (Math.random() - 0.5) * jitterS, now), level, rpm, loadLevel)
-    }
+  const loops = bank?.loops
+  // 뱅크가 아직 없거나 시동이 꺼졌으면 루프를 모두 내린다. 디코드가 끝나면 다음 tick이 집어 든다
+  if (!loops || loops.length === 0 || rpmLevel <= 0) {
+    releaseSlot(0, now)
+    releaseSlot(1, now)
+    return
   }
-  cursor = horizon
+  const mix = bankMix(rpmLevel, loops)
+  const want: Array<number | null> = [mix.lower, mix.upper === mix.lower ? null : mix.upper]
+  // 구간을 넘어갈 때 반대편 슬롯이 이미 그 루프를 돌리고 있으면 자리만 바꾼다 (다시 켜면 위상이 튄다)
+  const [a, b] = slots
+  if ((b && b.index === want[0]) || (a && want[1] !== null && a.index === want[1])) {
+    slots[0] = b
+    slots[1] = a
+  }
+  const g = loopGains(mix.t)
+  const target = [g.lower, g.upper]
+  for (let i = 0; i < 2; i++) {
+    const index = want[i]
+    if (index === null) {
+      releaseSlot(i, now)
+      continue
+    }
+    const rate = rpmLevel / loops[index].rpm
+    if (slots[i]?.index !== index) startSlot(i, index, rate, now)
+    const slot = slots[i]
+    if (!slot) continue
+    slot.src.playbackRate.setTargetAtTime(rate, now, RATE_TAU)
+    slot.gain.gain.setTargetAtTime(target[i], now, RATE_TAU)
+  }
 }
 
-/** 시동. 두 번 불러도 예약이 겹치지 않는다. */
+/** 시동. 두 번 불러도 겹치지 않는다. start.ogg를 울리고 0.8초 뒤부터 루프를 0.3초에 걸쳐 올린다 */
 export function start(): void {
   const ac = ensureContext()
-  if (!ac || !master) return
+  if (!ac || !master || !loopBus) return
+  void preload()
   if (suspendTimer !== null) {
     clearTimeout(suspendTimer)
     suspendTimer = null
   }
-  if (ac.state === 'suspended') void ac.resume()
-  master.gain.cancelScheduledValues(ac.currentTime)
-  master.gain.setValueAtTime(MASTER_GAIN, ac.currentTime)
+  const now = ac.currentTime
+  master.gain.cancelScheduledValues(now)
+  master.gain.setValueAtTime(MASTER_GAIN, now)
   if (timer !== null) return
   level = 0
   loadLevel = 0
   // 바깥에서 setRpm이 오기 전까지는 아이들로 돈다
   rpmLevel = IDLE_RPM
   blipUntil = 0
-  cursor = ac.currentTime
+  if (!bank) warnOnce('cold', '뱅크가 아직 준비되지 않았다 — 디코드가 끝나면 소리가 붙는다')
+  playOneShot(bank?.start)
+  loopBus.gain.cancelScheduledValues(now)
+  loopBus.gain.setValueAtTime(0, now)
+  loopBus.gain.setValueAtTime(0, now + START_DELAY_S)
+  loopBus.gain.linearRampToValueAtTime(1, now + START_DELAY_S + START_FADE_S)
   tick()
   timer = setInterval(tick, TICK_MS)
 }
 
-/** 회전수. 0 이하(시동 꺼짐·스톨)면 점화를 예약하지 않는다 */
+/** 회전수. 0 이하(시동 꺼짐·스톨)면 루프를 내린다 — playbackRate는 0이 될 수 없다 */
 export function setRpm(rpm: number): void {
-  rpmLevel = Number.isFinite(rpm) && rpm > 0 ? rpm : 0
+  rpmLevel = safeRpm(rpm)
 }
 
-/** 스로틀 0~1. 다음 예약 구간부터 반영된다 (위상 연속은 보장하지 않는다) */
+/** 스로틀 0~1. 머플러가 열리고 톤 게인이 오른다 */
 export function setThrottle(t: number): void {
   level = clamp01(t)
 }
 
-/** 물린 기어가 엔진에 거는 부하 0~1. 점화가 세진다 */
+/** 물린 기어가 엔진에 거는 부하 0~1. 최대 +3 dB */
 export function setLoad(l: number): void {
   loadLevel = clamp01(l)
 }
 
-/** 변속 순간의 흡기 "쉭" — 흡기 게인을 40ms 들어올렸다 내린다 */
+/** 변속 순간의 "쉭" — 톤 게인을 +4 dB 들었다 놓는다 */
 export function blip(): void {
   const ac = ctx
-  if (!ac || !intakeGain) return
+  if (!ac || !toneGain) return
   const now = ac.currentTime
-  const top = now + BLIP_HOLD_S
+  const base = toneFor(level, loadLevel).gain
+  const peak = base * dbToGain(BLIP_DB)
+  const top = now + BLIP_ATTACK_S + BLIP_HOLD_S
   blipUntil = top + BLIP_RELEASE_S
-  intakeGain.gain.cancelScheduledValues(now)
-  intakeGain.gain.setValueAtTime(intakeGain.gain.value, now)
-  intakeGain.gain.linearRampToValueAtTime(BLIP_GAIN, now + 0.008)
-  intakeGain.gain.setValueAtTime(BLIP_GAIN, top)
-  intakeGain.gain.linearRampToValueAtTime(level * level * INTAKE_GAIN, blipUntil)
+  toneGain.gain.cancelScheduledValues(now)
+  toneGain.gain.setValueAtTime(toneGain.gain.value, now)
+  toneGain.gain.linearRampToValueAtTime(peak, now + BLIP_ATTACK_S)
+  toneGain.gain.setValueAtTime(peak, top)
+  toneGain.gain.linearRampToValueAtTime(base, blipUntil)
 }
 
-/** 정지. 예약을 끊고 마스터를 0.15초에 걸쳐 내린다. 스로틀·회전수도 되돌린다. */
+/** 정지. 루프를 0.15초에 걸쳐 내리고 stop.ogg를 울린 뒤 컨텍스트를 재운다 */
 export function stop(): void {
   level = 0
   rpmLevel = 0
@@ -347,17 +337,20 @@ export function stop(): void {
     timer = null
   }
   const ac = ctx
-  if (!ac || !master) return
+  if (!ac || !loopBus) return
   const now = ac.currentTime
   blipUntil = 0
-  intakeGain?.gain.cancelScheduledValues(now)
-  intakeGain?.gain.setTargetAtTime(0, now, TONE_TAU)
-  master.gain.cancelScheduledValues(now)
-  master.gain.setValueAtTime(master.gain.value, now)
-  master.gain.linearRampToValueAtTime(0.0001, now + STOP_FADE_S)
+  loopBus.gain.cancelScheduledValues(now)
+  loopBus.gain.setValueAtTime(loopBus.gain.value, now)
+  loopBus.gain.linearRampToValueAtTime(0.0001, now + STOP_FADE_S)
+  releaseSlot(0, now + STOP_FADE_S)
+  releaseSlot(1, now + STOP_FADE_S)
+  playOneShot(bank?.stop)
+  // stop.ogg가 끝나기 전에 재우면 잘린다 — 페이드와 원샷 중 긴 쪽을 기다린다
+  const waitS = Math.max(STOP_FADE_S + SLOT_FADE_S, bank?.stop?.duration ?? 0) + 0.05
   if (suspendTimer !== null) clearTimeout(suspendTimer)
   suspendTimer = setTimeout(() => {
     suspendTimer = null
     void ac.suspend()
-  }, (STOP_FADE_S + 0.05) * 1000)
+  }, waitS * 1000)
 }
