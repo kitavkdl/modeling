@@ -1,0 +1,52 @@
+{
+  "loops": [
+    {
+      "rpm": 1330,
+      "file": "1320.ogg"
+    },
+    {
+      "rpm": 2250,
+      "file": "2250.ogg"
+    },
+    {
+      "rpm": 2790,
+      "file": "2760.ogg"
+    },
+    {
+      "rpm": 3760,
+      "file": "3750.ogg"
+    },
+    {
+      "rpm": 4100,
+      "file": "4100.ogg"
+    },
+    {
+      "rpm": 4620,
+      "file": "4620.ogg"
+    },
+    {
+      "rpm": 5460,
+      "file": "5520.ogg"
+    },
+    {
+      "rpm": 6460,
+      "file": "6500.ogg"
+    }
+  ],
+  "start": "start.ogg",
+  "stop": "stop.ogg",
+  "credits": [
+    {
+      "id": 641223,
+      "author": "AlexanderChe",
+      "license": "CC0",
+      "url": "https://freesound.org/s/641223/"
+    },
+    {
+      "id": 724077,
+      "author": "brucehep",
+      "license": "CC0",
+      "url": "https://freesound.org/s/724077/"
+    }
+  ]
+}
