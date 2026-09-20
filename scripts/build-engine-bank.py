@@ -28,11 +28,17 @@ FINE_HARM, FINE_SPAN, FINE_STEP = 10, 0.15, 0.005   # 배음 수 / 거친 값 �
 STEADY_TOL, STEADY_MIN_S = 0.04, 0.8    # 정속 창 허용 편차 / 최소 길이 (s)
 FLAT_TOL = 0.16         # 정밀 트랙 p5~p95 폭이 이보다 크면 "정속처럼 보였을 뿐"으로 본다
 PICK_TOL = 0.06         # 목표 rpm 대비 허용 편차
-FLATTEN_TOL, FLATTEN_MIN_S = 0.12, 0.6              # 평탄화 재료 허용 편차 / 최소 연속 길이 (s)
+FLATTEN_TOL, FLATTEN_MIN_S = 0.12, 0.30             # 평탄화 재료 허용 편차 / 최소 연속 길이 (s)
 FLATTEN_FRAME_S, FLATTEN_OVL_S, FLATTEN_GAP = 0.02, 0.006, 3    # 프레임 홉·이음 (s) / 메울 구멍 (프레임)
 FLATTEN_PASSES = 4      # 피치 평탄화 반복 상한 — 재서 남은 만큼 다시 편다
 EVEN_WIN_S, EVEN_MAX_DB = 0.15, 6.0     # 조각 안 음량 고르기 창 (s) / 최대 보정 (dB)
 LOOP_MIN_S, LOOP_MAX_S, LOOP_FLOOR_S = 1.2, 2.0, 0.5    # 루프 길이 범위 / 재료 부족 시 하한 (s)
+LOOP_TARGET_MIN_S = 1.8     # 재료가 허락하면 이보다 짧게 자르지 않는다. 0.9초 루프는 초당 한 번씩
+                            # 같은 대목이 돌아와 "같은 소리가 반복된다"로 들린다 — 런타임이 보이스
+                            # 둘로 흩어 놓더라도 원본이 짧으면 한계가 있다
+LOOP_SPLICE_S = 1.5         # 이보다 짧게밖에 못 자르면 자기이음으로 두 배 늘린다. 목표(1.8초)에
+                            # 조금 못 미치는 정도로는 부르지 않는다 — 1.79초를 3.58초로 만드는 것은
+                            # 파일만 두 배로 키우고 얻는 것이 없다
 XFADE_S = 0.08                      # 루프 이음새 등파워 크로스페이드 (s)
 # 정밀 f0 — 루프를 정수 주기로 자르는 기준. 여기서 1% 틀리면 루프마다 위상이 튀어 맥놀이가 된다.
 F0_FMAX, F0_SPAN = 2000.0, 0.04     # 최소제곱에 쓰는 배음 상한 (Hz) / 힌트 대비 탐색 폭
@@ -416,8 +422,10 @@ def _flatten_settle(piece: np.ndarray, sr: int, target: float) -> tuple[np.ndarr
     return piece, res
 
 
-def flatten_from_sweep(x: np.ndarray, sr: int, track: Track, target: float, need_s: float):
-    """스윕 등에서 목표 ±12% 안 연속 구간을 모아 프레임별 리샘플로 피치를 목표에 평탄화한다(2패스)."""
+def flatten_from_sweep(x: np.ndarray, sr: int, track: Track, target: float, need_s: float, runs_limit: int = 0):
+    """스윕 등에서 목표 ±12% 안 연속 구간을 모아 프레임별 리샘플로 피치를 목표에 평탄화한다(2패스).
+    runs_limit>0이면 그만큼의 구간만 쓴다 — 여러 구간을 이으면 피치가 흔들릴 때 한 구간만 쓴 재료와
+    견주어 보려고 둔 손잡이다(모자란 길이는 make_loop이 자기이음으로 메운다)."""
     dt = float(track.t[1] - track.t[0])
     ok = _close_gaps(track.valid & (np.abs(track.rpm - target) <= FLATTEN_TOL * target), FLATTEN_GAP)
     runs, i, n = [], 0, len(ok)
@@ -434,6 +442,10 @@ def flatten_from_sweep(x: np.ndarray, sr: int, track: Track, target: float, need
     if not runs:
         return None, []
     runs.sort(key=lambda r: r[0] - r[1])    # 긴 구간부터
+    # 가장 긴 구간을 기준으로 삼고, 나머지는 그것과 시간상 가까운 순서로 붙인다. 같은 주행 패스
+    # 안에서 이어야 마이크 거리·도플러가 달라 이은 자리에서 음색이 튀는 일이 적다.
+    anchor = runs[0]
+    runs = [anchor] + sorted(runs[1:], key=lambda r: (abs(r[0] - anchor[0]), r[0] - r[1]))
     acc, used, ref = None, [], 0.0
     for i, j in runs:
         a, b = int(track.t[i] * sr), int(min(track.t[j] + dt, len(x) / sr) * sr)
@@ -447,9 +459,13 @@ def flatten_from_sweep(x: np.ndarray, sr: int, track: Track, target: float, need
         piece = piece * (ref / rms)
         used.append((track.t[i], (j - i + 1) * dt))
         acc = _xfade_append(acc, piece, int(FLATTEN_OVL_S * sr))
-        # 긴 구간부터 쓴다. 한 구간만으로 최소 길이가 나오면 거기서 멈춘다 — 서로 다른 시각의
-        # 조각을 이어 붙이면 이은 자리에서 음색이 튀고, 그 자리가 루프마다 되풀이돼 귀에 걸린다.
-        if len(acc) >= min(need_s, LOOP_FLOOR_S + XFADE_S) * sr:
+        # 서로 다른 시각의 조각을 이어 붙이면 이은 자리에서 음색이 튀고, 그 자리가 루프마다
+        # 되풀이돼 귀에 걸린다 — 그래서 필요한 만큼만 모으고 곧바로 멈춘다. 다만 "필요한 만큼"은
+        # 1.8초다(LOOP_TARGET_MIN_S): 한 구간만으로 0.9초짜리 루프를 만들면 이음새는 하나뿐이어도
+        # 그 0.9초가 통째로 1초에 한 번씩 돌아와 더 크게 거슬린다.
+        if len(acc) >= min(need_s, LOOP_TARGET_MIN_S + XFADE_S) * sr:
+            break
+        if runs_limit and len(used) >= runs_limit:
             break
     return acc, used
 
@@ -486,6 +502,22 @@ def _assemble(seg: np.ndarray, off: int, length: int, xf: int) -> np.ndarray:
     return y
 
 
+def _self_splice(y: np.ndarray, f0: float, sr: int) -> np.ndarray:
+    """루프를 제 자신과 반 바퀴(정수 주기) 어긋난 복사본에 이어 붙여 길이를 두 배로 늘린다.
+
+    재료가 정말 없을 때 쓰는 마지막 수단이다. 같은 소리가 순서만 바뀌어 한 번 더 나오지만,
+    '정확히 L초마다 똑같은 대목'이라는 주기성은 사라진다(자기상관이 lag=L에서 1이 아니게 된다).
+    어긋냄을 정수 주기로 잡았으므로 이음새 두 곳 모두에서 기본파 위상이 맞고, y는 이미
+    이음매 없는 루프라 y[:xf]가 곧 끝 다음에 올 재료다 — 그래서 기존 등파워 이음을 그대로 쓴다."""
+    xf = int(XFADE_S * sr)
+    per = sr / max(f0, 1e-9)
+    cycles = max(2, int(round(len(y) / per)))
+    shift = int(round(max(1, round(cycles / 2)) * per)) % len(y)
+    b = np.roll(y, -shift)
+    joined = _xfade_append(np.concatenate([y, y[:xf]]), np.concatenate([b, b[:xf]]), xf)
+    return _assemble(joined, 0, 2 * len(y), xf)
+
+
 def _seam_db(y: np.ndarray, edge: int) -> float:
     """루프 끝과 처음 edge 샘플의 RMS 차 (dB) — 0에 가까울수록 이음새가 티나지 않는다."""
     head = float(np.sqrt(np.mean(y[:edge] ** 2)))
@@ -515,8 +547,13 @@ def _best_cut(seg: np.ndarray, f0: float, sr: int) -> tuple[int, int]:
     avail_s = (len(seg) - xf) / sr
     if avail_s < LOOP_FLOOR_S:
         raise ValueError(f"재료 {avail_s:.2f} s로는 {f0 * 60:.0f} rpm 루프를 만들 수 없다")
-    floor_s = LOOP_MIN_S if avail_s >= LOOP_MIN_S else LOOP_FLOOR_S     # 재료가 넉넉하면 짧은 루프는 보지 않는다
+    # 재료가 넉넉하면 짧은 루프는 아예 보지 않는다. 1.8초를 댈 수 있으면 그 밑은 후보에서 뺀다 —
+    # 출렁임이 0.2 dB 나아진다고 되풀이 주기를 반으로 줄이는 것은 손해다.
+    floor_s = (LOOP_TARGET_MIN_S if avail_s >= LOOP_TARGET_MIN_S
+               else LOOP_MIN_S if avail_s >= LOOP_MIN_S else LOOP_FLOOR_S)
     cyc_max, cyc_min = int(min(LOOP_MAX_S, avail_s) * f0), max(1, int(np.ceil(floor_s * f0)))
+    if cyc_min > cyc_max:       # 목표 길이를 간신히 넘는 재료 — 바닥을 한 단 낮춰 후보를 남긴다
+        cyc_min = max(1, int(np.ceil(min(LOOP_MIN_S, avail_s) * f0)))
     best, cands = None, []
     for cyc in range(cyc_max, cyc_min - 1, -1):
         length = int(round(cyc * per))
@@ -564,6 +601,11 @@ def make_loop(seg: np.ndarray, rpm_hint: float, sr: int = SR_OUT) -> tuple[np.nd
         if i == 3 or abs(nxt - f0) <= F0_SETTLE * f0:
             break                           # 마지막 바퀴에서는 f0를 갱신하지 않는다 — 길이와 반드시 맞춰야 한다
         f0 = nxt
+    # 재료가 모자라 1.8초를 못 채웠으면 제 자신과 반 바퀴 어긋나게 이어 붙여 길이를 두 배로 늘린다
+    spliced = length / sr < LOOP_SPLICE_S
+    if spliced:
+        raw = _self_splice(raw, f0, sr)
+        length, cycles = len(raw), cycles * 2
     edge = min(max(int(0.02 * sr), int(sr / f0)), length // 4, xf)   # 이음새 비교 구간 (점화 1주기, ≥20 ms)
     # 포락선은 하이패스 뒤에 편다 — 30 Hz HP는 22 Hz 아이들의 기본파를 깎아 내며 음량 분포를
     # 바꿔 놓으므로, 실제로 내보낼 신호에서 재고 펴야 한다. 순환 필터라 이음새는 그대로다.
@@ -578,7 +620,8 @@ def make_loop(seg: np.ndarray, rpm_hint: float, sr: int = SR_OUT) -> tuple[np.nd
         "seam_db": _seam_db(y, edge),
         "limited": limited,
         "peak_db": peak_db,
-        "short": length / sr < LOOP_MIN_S,
+        "short": length / sr < LOOP_TARGET_MIN_S,
+        "spliced": spliced,
         "env_before": before,
         "env_after": env_db(y, sr),
         "raw": raw,     # 하이패스 전 신호 — f0·잔류 피치는 여기서 잰다 (22 Hz 아이들 기본파 보존)
@@ -661,7 +704,7 @@ def _plot(path: str, items: list[tuple[str, np.ndarray, float]], sr: int = SR_OU
     print(f"  스펙트로그램: {path}")
 
 
-def build_loop(x: np.ndarray, fine: Track, sid: int, target: int, win, need: float):
+def build_loop(x: np.ndarray, fine: Track, sid: int, target: int, win, need: float, runs_limit: int = 0):
     """정속 창(win) 하나 또는 스윕 평탄화로 재료를 모아 루프 하나를 만든다. 재료가 없으면 None.
     돌려주는 info에는 판정에 쓰는 실측값(정밀 rpm·잔류 피치·포락선 깊이)이 들어 있다."""
     if win is not None:
@@ -669,7 +712,7 @@ def build_loop(x: np.ndarray, fine: Track, sid: int, target: int, win, need: flo
         seg, rpm_hint = x[a:a + int(span * SR_OUT)], win[2]
         where, method = f"{sid} @{win[0]:.1f}s/{span:.2f}s", "steady"
     else:
-        seg, used = flatten_from_sweep(x, SR_OUT, fine, float(target), need)
+        seg, used = flatten_from_sweep(x, SR_OUT, fine, float(target), need, runs_limit)
         if seg is None:
             return None
         rpm_hint, method = float(target), "flattened"
@@ -687,6 +730,14 @@ def build_loop(x: np.ndarray, fine: Track, sid: int, target: int, win, need: flo
     info["old_rpm"] = measure_rpm(info["raw"])      # 예전 추정(거친 트래커 + 10 rpm 반올림) — 비교용
     info["rpm"] = info["f0"] * 60.0
     return y, info, where, method
+
+
+def _rank(info: dict) -> tuple:
+    """후보 줄 세우기 — 작을수록 좋다.
+    (1) 잔류 피치가 기준(1%)을 넘긴 것은 뒤로, (2) 자기이음으로 늘린 것은 실재료보다 뒤로,
+    (3) 그다음 잔류 피치가 작은 순. 실재료로 이은 1.9초 루프가 0.1% 더 흔들리더라도, 같은
+    1초를 두 번 이어 붙인 것보다 낫다 — 사용자가 지적한 것은 흔들림이 아니라 되풀이다."""
+    return (info["res"] > RES_DROP, bool(info.get("spliced")), info["res"])
 
 
 def _plot_env(path: str, items: list[tuple[str, np.ndarray, np.ndarray]], sr: int = SR_OUT) -> None:
@@ -745,8 +796,10 @@ def main(argv=None) -> int:
         wins = [w for w in pick_windows(steady_windows(tr), target)
                 if _spread(fine, w[0], min(w[1], need)) <= FLAT_TOL]   # 긴 창(1.024 s) 탓에 정속으로 보였을 뿐
         best = None
-        for win in [*wins, None]:
-            got = build_loop(x, fine, sid, target, win, need)
+        # 정속 창 → 여러 구간을 이은 평탄화 → 가장 긴 구간 하나만 쓴 평탄화 순으로 본다.
+        # 마지막 후보는 이은 자리에서 피치가 흔들려 통째로 버려질 때를 위한 보험이다.
+        for win, runs_limit in [*((w, 0) for w in wins), (None, 0), (None, 1)]:
+            got = build_loop(x, fine, sid, target, win, need, runs_limit)
             if got is None:
                 print(f"! {target} rpm 재료 없음: ±{FLATTEN_TOL:.0%} 안에 {FLATTEN_MIN_S} s 이상 구간이 없다")
                 continue
@@ -761,9 +814,9 @@ def main(argv=None) -> int:
             if abs(info["rpm"] - target) > PICK_TOL * target:
                 print(f"    → 실측 {info['rpm']:.0f} rpm이 ±{PICK_TOL:.0%}를 벗어났다")
                 continue
-            if best is None or info["res"] < best[1]["res"]:
+            if best is None or _rank(info) < _rank(best[1]):
                 best = got
-            if info["res"] <= RES_TARGET:
+            if not info["spliced"] and info["res"] <= RES_TARGET:
                 break       # 충분히 조용하면 여기서 끝낸다. 아니면 남은 후보도 만들어 보고 제일 나은 것을 쓴다
         if best is None:
             print(f"! {target} rpm 제외: 쓸 만한 재료가 없다")
@@ -808,6 +861,7 @@ def main(argv=None) -> int:
               f"{info['len_s']:6.3f}s {info['cycles']:5d} {info['seam_db']:+7.2f}dB {info['res'] * 100:5.2f}% "
               f"{info['env'][0]:6.2f}→{info['env'][1]:5.2f}dB  {method}"
               + ("  [짧음]" if info["short"] else "")
+              + ("  [자기이음 ×2]" if info["spliced"] else "")
               + (f"  [출렁임 {ENV_TARGET_DB:.0f}dB 초과]" if info["env"][1] > ENV_TARGET_DB else "")
               + (f"  [리미팅 {info['peak_db']:+.1f}dBFS]" if info["limited"] else ""))
     total = sum(os.path.getsize(os.path.join(args.outdir, f)) for f in os.listdir(args.outdir))
