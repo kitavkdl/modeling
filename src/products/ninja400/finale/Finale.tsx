@@ -7,6 +7,7 @@ import { preloadRideModel, RideModel } from '../render/RideModel'
 import { IGNITION } from '../render/rideLayout'
 import { RideFog, RoadTiles } from '../render/RoadTiles'
 import { RideControls } from './RideControls'
+import { CRANK_S } from './rideModel'
 import { resetRide, ride } from './rideState'
 import { Starter } from './Starter'
 import { Throttle } from './Throttle'
@@ -52,6 +53,8 @@ function EngineEffect() {
     if (!running) return
     resetRide()
     ride.running = true
+    // 첫 시동도 재시동과 똑같이 크랭킹 0.6초를 거친다 — 계기는 ~300 rpm, 소리는 스타터 원샷
+    ride.crankFor = CRANK_S
     engineSound.start()
     return () => {
       engineSound.stop()
