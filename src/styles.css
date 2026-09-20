@@ -274,7 +274,10 @@ body,
 
 /* --- Ride gauge ----------------------------------------------------------- */
 .gauge { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 2px; }
-.gauge-gear { font-size: 48px; line-height: 1; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; color: var(--fg); }
+.gauge-top { display: flex; align-items: baseline; gap: 14px; }
+.gauge-speed { font-size: 56px; line-height: 1; letter-spacing: 0.01em; font-variant-numeric: tabular-nums; color: var(--fg); }
+.gauge-speed > b { font-size: 11px; font-weight: 400; letter-spacing: 0.12em; color: var(--fg-dim); margin-left: 6px; }
+.gauge-gear { font-size: 32px; line-height: 1; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; color: var(--fg); }
 .gauge-bar { position: relative; width: 220px; height: 6px; border: 1px solid var(--line); }
 .gauge-bar > i { display: block; height: 100%; background: var(--fg-dim); transition: width 100ms linear; }
 .gauge-bar.over > i { background: var(--fg); }

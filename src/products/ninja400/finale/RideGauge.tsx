@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useAssembly } from '../../../engine/context'
-import { CLUTCH_ENGAGED, MAX_RPM } from './rideModel'
+import { CLUTCH_ENGAGED, MAX_RPM, speedKmh } from './rideModel'
 import { ride } from './rideState'
 
 // HUD 우하단 계기 (product.hudExtra). 매 프레임 값을 리액트 상태로 올리면 장면이 통째로
@@ -13,6 +13,8 @@ const REDLINE = MAX_RPM
 const POLL_MS = 100
 
 interface Snap {
+  /** 표시용 속도 (km/h) */
+  speed: number
   rpm: number
   gear: number
   clutch: number
@@ -21,6 +23,7 @@ interface Snap {
 }
 
 const read = (): Snap => ({
+  speed: Math.round(speedKmh(ride.speed)),
   rpm: Math.round(ride.rpm),
   gear: ride.gear,
   clutch: ride.clutch,
@@ -45,7 +48,13 @@ export function RideGauge() {
   const width = `${Math.min(100, (snap.rpm / BAR_MAX) * 100)}%`
   return (
     <div className="gauge">
-      <div className="gauge-gear">{snap.gear === 0 ? 'N' : snap.gear}</div>
+      <div className="gauge-top">
+        <div className="gauge-speed">
+          {snap.speed}
+          <b>km/h</b>
+        </div>
+        <div className="gauge-gear">{snap.gear === 0 ? 'N' : snap.gear}</div>
+      </div>
       <div className={over ? 'gauge-bar over' : 'gauge-bar'}>
         <i style={{ width }} />
         <span className="gauge-redline" style={{ left: `${(REDLINE / BAR_MAX) * 100}%` }} />

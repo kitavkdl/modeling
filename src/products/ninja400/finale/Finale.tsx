@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useAssembly, useAssemblyStore } from '../../../engine/context'
 import { requestCameraView } from '../../../engine/scene/controlsRef'
 import * as engineSound from '../audio/engineSound'
+import { RideFog, RoadTiles } from '../render/RoadTiles'
 import { RideControls } from './RideControls'
 import { resetRide, ride } from './rideState'
 import { Starter } from './Starter'
@@ -14,6 +15,8 @@ export function NinjaFinale() {
       <Starter />
       <Throttle />
       <RideControls />
+      <RoadTiles />
+      <RideFog />
       <EngineEffect />
       <FinaleCamera />
     </>
@@ -48,7 +51,8 @@ function FinaleCamera() {
     return store.subscribe((s, prev) => {
       if (s.phase === prev.phase) return
       if (s.phase === 'keyed') requestCameraView({ azimuth: 15, polar: 55, distance: 2400 }, [520, 950, 0])
-      else if (s.phase === 'running') requestCameraView({ azimuth: 35, polar: 62, distance: 3800 }, [0, 550, 0])
+      // running: 뒤 왼쪽 3/4 낮은 시점(azimuth 90 = 정면, 270 = 정후방 · 215면 왼쪽 뒤). 바닥이 흘러가는 것이 보인다
+      else if (s.phase === 'running') requestCameraView({ azimuth: 215, polar: 72, distance: 3400 }, [0, 600, 0])
     })
   }, [store])
   return null
