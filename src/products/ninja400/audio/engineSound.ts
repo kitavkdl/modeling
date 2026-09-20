@@ -6,8 +6,8 @@
 // 여기에 스로틀에 비례하는 흡기 노이즈와 기계음(기어 휘인)을 상시로 섞는다.
 // rpm은 바깥(주행 모델)에서 setRpm으로 들어온다. 하우징 울림은 키보드 switchSound와 같은 2탭 딜레이.
 
-export const IDLE_RPM = 1300
-export const MAX_RPM = 10000
+// 회전수 기준값은 주행 모델 하나만 가진다 (여기서 다시 선언하면 둘이 어긋난다)
+import { IDLE_RPM, MAX_RPM } from '../finale/rideModel'
 
 /** 예약을 미리 걸어 두는 구간 */
 const LOOKAHEAD_S = 0.1
@@ -114,7 +114,9 @@ function handleVisibilityChange() {
   if (!ctx) return
   if (document.hidden) {
     if (timer !== null) void ctx.suspend()
-  } else if (ctx.state === 'suspended') {
+  } else if (timer !== null && ctx.state === 'suspended') {
+    // 돌고 있던 엔진만 깨운다. stop()이 재운 컨텍스트를 여기서 깨우면
+    // 게인 0짜리 흡기 노이즈와 기계음 오실레이터가 조용히 계속 돈다.
     void ctx.resume().then(() => {
       if (ctx) cursor = ctx.currentTime
     })

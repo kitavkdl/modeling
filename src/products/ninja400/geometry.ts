@@ -436,7 +436,8 @@ export function cylinderHeadGeometry(): Geometry {
 }
 
 /** 캠 커버: 아래가 넓고 위가 좁은 loft 4단면 + 윗면 덮개 + 플러그 홀 보스 2개.
- *  폭은 실린더 헤드(z ±120)보다 안쪽인 ±104다 — 탱크 밑단 아래로 들어가야 옆구리로 비치지 않는다. */
+ *  폭은 실린더 헤드(z ±120)보다 안쪽인 ±104다 — 탱크 밑단 아래로 들어가야 옆구리로 비치지 않는다.
+ *  캠샤프트(길이 200, 끝 z ±100)는 이 밑단 폭 안에 들어간다. 커버를 넓히는 대신 샤프트를 줄였다. */
 export function camCoverGeometry(h = 52): Geometry {
   const rect = (y: number, hx: number, hz: number): Vec3[] => [
     [hx, y, hz], [hx, y, -hz], [-hx, y, -hz], [-hx, y, hz],

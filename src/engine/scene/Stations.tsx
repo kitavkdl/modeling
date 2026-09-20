@@ -48,10 +48,16 @@ export function StationGroup({ station, children }: { station: StationDef; child
   )
 }
 
-/** 작업대 소품(엔진 스탠드 등)과 제품 고정 소품(지그). 장착 대상이 아니다. */
+/**
+ * 작업대 소품(작업대 벤치)과 제품 고정 소품(지그 기둥). 장착 대상이 아니다.
+ * 조립이 끝나면 전부 치운다 — 지그 기둥이 완성된 차체의 휠·카울을 뚫고, 벤치도 더는 쓸 데가 없다.
+ * (StationDef.prop도 여기서 그리므로 벤치와 지그가 같이 사라진다.)
+ */
 export function Props() {
   const product = useProduct()
   const materials = useMaterials()
+  const phase = useAssembly((s) => s.phase)
+  if (phase !== 'assembly') return null
   return (
     <group>
       {product.stations.map((s) =>

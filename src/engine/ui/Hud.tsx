@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useAssembly, useProduct } from '../context'
-import { canSkip, isPartComplete } from '../store'
+import { canSkip, canUndo, isPartComplete } from '../store'
 import { VariantPicker } from './VariantPicker'
 
 const FOCUSED_INPUT_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT'])
@@ -27,15 +27,15 @@ export function Hud({ onBack }: { onBack: () => void }) {
   const phase = useAssembly((s) => s.phase)
   const undo = useAssembly((s) => s.undo)
   const reset = useAssembly((s) => s.reset)
-  const history = useAssembly((s) => s.history)
   const selectedPartId = useAssembly((s) => s.selectedPartId)
   const skipCurrent = useAssembly((s) => s.skipCurrent)
   const advancePhase = useAssembly((s) => s.advancePhase)
   const skippable = useAssembly((s) => canSkip(s))
+  // 버튼과 Ctrl+Z 둘 다 스토어와 같은 규칙을 쓴다 (phaseOnMount 단계에서도 한 수는 물린다)
+  const undoable = useAssembly((s) => canUndo(s))
   const hint = useHint()
 
   const doneCount = product.parts.filter((p) => isPartComplete(mounted, p)).length
-  const canUndo = history.length > 0 && (phase === 'assembly' || phase === 'complete')
   const selected = selectedPartId ? product.parts.find((p) => p.id === selectedPartId) ?? null : null
 
   const seq = product.phasesAfterComplete
@@ -50,7 +50,7 @@ export function Hud({ onBack }: { onBack: () => void }) {
       if (isTypingTarget(e.target)) return
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
-        undo()
+        if (undoable) undo()
       } else if (e.key === 'Enter' && showSkip) {
         e.preventDefault()
         onSkip()
@@ -58,7 +58,7 @@ export function Hud({ onBack }: { onBack: () => void }) {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [undo, showSkip, onSkip])
+  }, [undo, undoable, showSkip, onSkip])
 
   return (
     <>
@@ -77,7 +77,7 @@ export function Hud({ onBack }: { onBack: () => void }) {
 
       <div className="hud hud-tr">
         <div className="hud-actions">
-          <button className="btn" disabled={!canUndo} onClick={undo} title="Ctrl+Z">
+          <button className="btn" disabled={!undoable} onClick={undo} title="Ctrl+Z">
             실행 취소
           </button>
           <button className="btn btn-quiet" onClick={reset}>

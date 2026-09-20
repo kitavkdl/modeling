@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveDragTargets, thresholdPx } from './dragMath'
+import { resolveAlongSegment, resolveDragTargets, thresholdPx } from './dragMath'
 import type { PartDef } from '../types'
 
 const part = (count: number): PartDef => ({
@@ -48,5 +48,26 @@ describe('resolveDragTargets (screen space)', () => {
       { id: 'p_2', px: { x: 50, y: 0 }, radiusPx: 20 },
     ]
     expect(resolveDragTargets(p, { x: 0, y: 0 }, ghosts, {}).paint).toEqual(['p_0'])
+  })
+})
+
+describe('resolveAlongSegment (빠른 쓸기)', () => {
+  const ghosts = [
+    { id: 'p_0', px: { x: 0, y: 0 }, radiusPx: 20 },
+    { id: 'p_1', px: { x: 60, y: 0 }, radiusPx: 20 },
+  ]
+  it('반경 20짜리 슬롯 두 개가 60px 떨어져 있어도 80px 한 방에 둘 다 박힌다', () => {
+    // 한 번의 pointermove가 슬롯 하나만 박으면 p_1이 빠진다. 구간을 10px(반경의 절반)씩 밟으면 둘 다 걸린다.
+    expect(resolveAlongSegment(part(2), { x: -5, y: 0 }, { x: 75, y: 0 }, ghosts, {}, 10)).toEqual(['p_0', 'p_1'])
+  })
+  it('이미 장착된 슬롯은 건너뛰고, 같은 슬롯을 두 번 담지 않는다', () => {
+    const taken = resolveAlongSegment(part(2), { x: -5, y: 0 }, { x: 75, y: 0 }, ghosts, { p_0: { instanceId: 'p_0', at: 0 } }, 10)
+    expect(taken).toEqual(['p_1'])
+  })
+  it('제자리(from === to)면 그 지점만 판정한다', () => {
+    expect(resolveAlongSegment(part(2), { x: 60, y: 0 }, { x: 60, y: 0 }, ghosts, {}, 10)).toEqual(['p_1'])
+  })
+  it('단일 부품은 페인팅이 없으므로 빈 배열', () => {
+    expect(resolveAlongSegment(part(1), { x: 0, y: 0 }, { x: 80, y: 0 }, [{ id: 'p', px: { x: 0, y: 0 }, radiusPx: 20 }], {}, 10)).toEqual([])
   })
 })

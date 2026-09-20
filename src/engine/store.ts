@@ -214,18 +214,17 @@ export function createAssemblyStore(product: ProductDef): AssemblyStore {
       if (!selectedPartId || sequencing || phase !== 'assembly') return
       const part = product.parts.find((p) => p.id === selectedPartId)
       if (!part || part.variants) return
-      get().mountAll(part.id, 20, part.restPosition)
+      // mountAll의 from은 작업대 로컬 좌표다 (MountedInstanceView가 그대로 쓴다).
+      // 대기 위치는 월드 좌표이므로 작업대 오프셋을 빼고 넘긴다.
+      const off = stationOffset(product, part, get().mounted)
+      const r = part.restPosition
+      get().mountAll(part.id, 20, [r[0] - off[0], r[1] - off[1], r[2] - off[2]])
     },
 
     undo: () => {
       const state = get()
       const last = state.history[state.history.length - 1]
-      const lastPart = last ? partOf(product, last) : null
-      const allowed =
-        state.phase === 'assembly' ||
-        state.phase === 'complete' ||
-        (lastPart?.phaseOnMount !== undefined && state.phase === lastPart.phaseOnMount)
-      if (!allowed || !last) return
+      if (!canUndo(state)) return
       if (state.sequencing) clearSequence()
       const mounted = { ...state.mounted }
       delete mounted[last]
@@ -269,6 +268,21 @@ export function createAssemblyStore(product: ProductDef): AssemblyStore {
       })
     },
   }))
+}
+
+/**
+ * 되돌리기가 허용되는가. 조립 중과 complete는 물론, 마지막 부품이 phaseOnMount로 끌고 간
+ * 단계(예: keyed)에서도 그 한 수는 물릴 수 있다. HUD 버튼과 Ctrl+Z가 같은 규칙을 쓴다.
+ */
+export const canUndo = (s: Pick<AssemblyState, 'history' | 'phase' | 'product'>): boolean => {
+  const last = s.history[s.history.length - 1]
+  if (!last) return false
+  const lastPart = partOf(s.product, last)
+  return (
+    s.phase === 'assembly' ||
+    s.phase === 'complete' ||
+    (lastPart.phaseOnMount !== undefined && s.phase === lastPart.phaseOnMount)
+  )
 }
 
 export const canSkip = (s: Pick<AssemblyState, 'selectedPartId' | 'sequencing' | 'phase' | 'product'>): boolean =>

@@ -18,16 +18,13 @@ const KICK_DEG = 10
 const RAD_PER_RPM = (2 * Math.PI) / 60
 const MAX_DT = 0.1
 
-/** 박스 부품의 x 길이 절반 (mm). 회전축을 부품 뿌리로 옮기는 데 쓴다 */
-const halfLength = (ctx: RenderInstanceCtx, fallback: number) => {
-  const g = ctx.inst.geometry
-  if (g.type === 'box') return g.size[0] / 2
-  if (g.type === 'composite') {
-    const first = g.children[0]?.geometry
-    if (first && first.type === 'box') return first.size[0] / 2
-  }
-  return fallback
-}
+/**
+ * 부품 원점에서 회전축(뿌리)까지의 거리 (mm, -x 방향). 형상에서 유추하지 않고 부품마다 적는다.
+ * - lever: 원점이 이미 퍼치(뿌리)다 → 0
+ * - shift_lever: 원점이 샤프트 막대(길이 180) 한가운데라 뒤쪽 끝이 뿌리 → 90
+ */
+const PIVOT_MM: Record<string, number> = { lever: 0, shift_lever: 90 }
+const pivotMm = (ctx: RenderInstanceCtx) => PIVOT_MM[ctx.part.id] ?? 0
 
 function Body({ part, inst }: RenderInstanceCtx) {
   const materials = useMaterials()
@@ -35,13 +32,13 @@ function Body({ part, inst }: RenderInstanceCtx) {
 }
 
 /**
- * 브레이크·클러치 레버. 부품 원점이 레버 한가운데라서 뿌리(뒤쪽 끝)로 축을 옮긴 뒤
- * 수직축(y)으로 돌린다 — 끝이 그립 쪽(바깥)으로 쓸려 들어간다.
+ * 브레이크·클러치 레버. 뿌리(퍼치)를 축으로 수직축(y)으로 돌린다 —
+ * 끝이 그립 쪽(바깥)으로 쓸려 들어간다. 레버는 원점이 곧 뿌리라 축을 옮기지 않는다.
  */
 export function LeverPivot(ctx: RenderInstanceCtx) {
   const pivot = useRef<THREE.Group>(null)
   const clutch = ctx.inst.tag === 'clutch'
-  const half = halfLength(ctx, 75)
+  const half = pivotMm(ctx)
   useFrame(() => {
     const g = pivot.current
     if (!g) return
@@ -75,7 +72,7 @@ export function Spinner(ctx: RenderInstanceCtx) {
 /** 시프트 레버. 변속할 때 샤프트(뒤쪽 끝)를 축으로 한 번 차인다 */
 export function ShiftLever(ctx: RenderInstanceCtx) {
   const pivot = useRef<THREE.Group>(null)
-  const half = halfLength(ctx, 90)
+  const half = pivotMm(ctx)
   useFrame(() => {
     const g = pivot.current
     if (!g) return

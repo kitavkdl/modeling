@@ -5,6 +5,7 @@ import type { PartDef, ProductDef } from './types'
 import {
   availableParts,
   canSkip,
+  canUndo,
   createAssemblyStore,
   isAssemblyComplete,
   isStationSeated,
@@ -203,7 +204,7 @@ describe('assembly store', () => {
   })
 })
 
-function tinyProduct(withPhaseOnMount = false): ProductDef {
+function tinyProduct(withPhaseOnMount = false, withStation = false): ProductDef {
   // 부품 3개: a(preplaced) → b(count 2) → c(마지막, phaseOnMount)
   const mk = (id: string, count: number, requires: string[], extra: Partial<PartDef> = {}): PartDef => ({
     id,
@@ -231,7 +232,16 @@ function tinyProduct(withPhaseOnMount = false): ProductDef {
   return {
     ...product,
     phasesAfterComplete: ['keyed', 'running'],
-    parts: [mk('a', 1, [], { preplaced: true }), mk('b', 2, ['a']), mk('c', 1, ['b'], withPhaseOnMount ? { phaseOnMount: 'keyed' } : {})],
+    parts: [
+      mk('a', 1, [], { preplaced: true }),
+      // withStation이면 b는 키보드 제품의 'sandwich' 작업대(offset [0, 45, 0]) 소속이고 c가 그것을 결합한다.
+      // 결합 전이라 b의 대기 위치(월드)에서 작업대 오프셋을 빼야 작업대 로컬 출발점이 된다.
+      mk('b', 2, ['a'], withStation ? { station: 'sandwich', restPosition: [0, 500, 500] } : {}),
+      mk('c', 1, ['b'], {
+        ...(withPhaseOnMount ? { phaseOnMount: 'keyed' as const } : {}),
+        ...(withStation ? { marries: 'sandwich' } : {}),
+      }),
+    ],
   }
 }
 
@@ -251,6 +261,32 @@ describe('skipCurrent / phaseOnMount', () => {
     expect(store.getState().mounted['b:0'].from).toEqual([0, 0, 500])
     expect(store.getState().mounted['b:1']).toBeDefined()
     expect(store.getState().selectedPartId).toBe('c')
+  })
+
+  it('작업대 부품을 건너뛰면 대기 위치에서 작업대 오프셋을 뺀 자리에서 떨어진다', async () => {
+    vi.useFakeTimers()
+    const store = createAssemblyStore(tinyProduct(false, true))
+    // 작업대 'sandwich'는 offset [0, 45, 0]이고 c가 결합하기 전이라 아직 떠 있다
+    expect(stationOffset(store.getState().product, store.getState().product.parts[1], store.getState().mounted))
+      .toEqual([0, 45, 0])
+    store.getState().skipCurrent()
+    await vi.runAllTimersAsync()
+    // 대기 위치 [0, 500, 500] − 작업대 오프셋 [0, 45, 0]
+    expect(store.getState().mounted['b:0'].from).toEqual([0, 455, 500])
+    expect(store.getState().mounted['b:1'].from).toEqual([0, 455, 500])
+  })
+
+  it('canUndo는 phaseOnMount 단계에서는 참, 그 뒤 단계에서는 거짓', () => {
+    const store = createAssemblyStore(tinyProduct(true))
+    expect(canUndo(store.getState())).toBe(false) // 히스토리가 비었다
+    store.getState().mount('b:0')
+    expect(canUndo(store.getState())).toBe(true)
+    store.getState().mount('b:1')
+    store.getState().mount('c')
+    expect(store.getState().phase).toBe('keyed')
+    expect(canUndo(store.getState())).toBe(true)
+    store.getState().advancePhase() // keyed → running
+    expect(canUndo(store.getState())).toBe(false)
   })
 
   it('마지막 부품에 phaseOnMount가 있으면 complete 대신 그 phase로 간다', () => {

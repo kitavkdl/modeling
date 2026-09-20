@@ -53,3 +53,39 @@ export function resolveDragTargets(part: PartDef, partPx: ScreenPt, ghosts: Ghos
   }
   return { snap: null, paint: best ? [best.id] : [] }
 }
+
+/** 한 번의 pointermove에서 훑을 최대 표본 수 */
+export const MAX_SEGMENT_STEPS = 12
+
+/**
+ * 이전 포인터 위치 → 지금 위치를 잇는 선분을 stepPx 간격으로 훑으면서, 지나간 슬롯을 순서대로 모은다.
+ * pointermove 한 번에 슬롯 하나만 박으므로, 빠르게 쓸면 이동 폭이 판정 반경의 2배를 넘어
+ * 사이의 슬롯이 통째로 빠진다. 선분을 잘라 밟으면 손이 지나간 자리는 전부 박힌다.
+ * 표본은 최대 MAX_SEGMENT_STEPS개로 끊는다 (화면을 가로지르는 한 방에 수백 번 돌지 않게).
+ * 단일 부품(count === 1)은 페인팅이 없으므로 항상 빈 배열이다.
+ */
+export function resolveAlongSegment(
+  part: PartDef,
+  from: ScreenPt,
+  to: ScreenPt,
+  ghosts: GhostPx[],
+  mounted: Mounted,
+  stepPx: number,
+): string[] {
+  const dx = to.x - from.x
+  const dy = to.y - from.y
+  const span = Math.hypot(dx, dy)
+  const steps = Math.max(1, Math.min(MAX_SEGMENT_STEPS, Math.ceil(span / Math.max(1, stepPx))))
+  const taken: string[] = []
+  // 이미 고른 것을 장착된 셈 치고 넘겨야 다음 표본이 같은 슬롯을 다시 고르지 않는다
+  const seen: Mounted = { ...mounted }
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps
+    const at = { x: from.x + dx * t, y: from.y + dy * t }
+    for (const id of resolveDragTargets(part, at, ghosts, seen).paint) {
+      taken.push(id)
+      seen[id] = { instanceId: id, at: 0 }
+    }
+  }
+  return taken
+}

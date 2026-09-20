@@ -229,6 +229,12 @@ describe('ninja400 parts', () => {
     expect(tank.max[2]).toBeGreaterThanOrEqual(cam.max[2])
     // 탱크 뒤쪽 밑면은 엔진 윗면(캠 커버 뒤끝 y 789)보다 위라 그 자리에서는 아예 겹치지 않는다
     expect(tank.min[1]).toBeLessThanOrEqual(760)
+    // 캠샤프트 양 끝이 커버 밑단 폭 안에 들어간다 (Task 11에서 커버를 ±104로 좁히며 샤프트도 208로 줄였다)
+    for (const inst of PART_BY_ID.camshaft.instances) {
+      const shaft = instanceBounds(inst)
+      expect(shaft.max[2], `${inst.id} 캠샤프트 끝이 커버 밖`).toBeLessThanOrEqual(cam.max[2])
+      expect(shaft.min[2], `${inst.id} 캠샤프트 끝이 커버 밖`).toBeGreaterThanOrEqual(cam.min[2])
+    }
   })
   it('라디에이터가 프레임 튜브 안쪽에 들어간다', () => {
     // Task 8에서 대각 브레이스([120,780,175]→[225,640,152]→[330,500,128])가 라디에이터를 스쳤다.

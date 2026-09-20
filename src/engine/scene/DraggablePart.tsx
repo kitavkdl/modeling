@@ -7,7 +7,7 @@ import { PartGeometry } from '../geometry/PartGeometry'
 import { isStationSeated } from '../store'
 import { MM, type PartDef, type Vec3 } from '../types'
 import { cancelCameraTween, setControlsEnabled } from './controlsRef'
-import { resolveDragTargets, thresholdPx, type GhostPx, type ScreenPt } from './dragMath'
+import { resolveAlongSegment, resolveDragTargets, thresholdPx, type GhostPx, type ScreenPt } from './dragMath'
 
 // 트레이에서 고른 부품의 실물. 대기 위치에 놓여 있고, 잡아서 끌 수 있다.
 // 단일 부품: 고스트 위에 겹쳐 놓으면 장착. 멀리서 놓으면 제자리로 돌아간다.
@@ -56,6 +56,8 @@ function Draggable({ part }: { part: PartDef }) {
   const grabMesh = useRef<THREE.Mesh>(null)
   const drag = useRef<DragState | null>(null)
   const returning = useRef<ReturnState | null>(null)
+  /** 직전 pointermove에서의 부품 화면 좌표. 그 사이 구간을 잘라 밟으며 페인팅한다 */
+  const prevPx = useRef<ScreenPt | null>(null)
   const { camera, gl } = useThree()
   const raycaster = useRef(new THREE.Raycaster()).current
   const ndc = useRef(new THREE.Vector2()).current
@@ -98,6 +100,7 @@ function Draggable({ part }: { part: PartDef }) {
       }
     }
     drag.current = null
+    prevPx.current = null
     s.setDragTarget(null)
     s.setDragging(false)
     setControlsEnabled(true)
@@ -134,14 +137,20 @@ function Draggable({ part }: { part: PartDef }) {
         })
       }
       const partPx = projectPx(d.target, camera, rect, proj)
-      const { snap, paint } = resolveDragTargets(part, partPx, ghosts, mounted)
       const s = store.getState()
       if (part.count === 1) {
-        s.setDragTarget(snap)
+        s.setDragTarget(resolveDragTargets(part, partPx, ghosts, mounted).snap)
+        prevPx.current = partPx
         return
       }
+      // 포인터가 한 번에 판정 반경의 2배 넘게 뛰면 사이의 슬롯이 빠진다.
+      // 직전 위치에서 지금 위치까지를 가장 작은 반경의 절반 간격으로 밟으며 지나간 자리를 전부 박는다.
+      const from = prevPx.current ?? partPx
+      const stepPx = ghosts.reduce((m, g) => Math.min(m, g.radiusPx), Infinity) / 2
       // 출발점은 잡고 있는 실물 위치. 들고 있는 부품에서 튀어나와 박히는 것처럼 보인다.
-      for (const id of paint) s.mount(id, [d.target.x / MM - ox, d.target.y / MM - oy, d.target.z / MM - oz])
+      const dropAt: Vec3 = [d.target.x / MM - ox, d.target.y / MM - oy, d.target.z / MM - oz]
+      for (const id of resolveAlongSegment(part, from, partPx, ghosts, mounted, stepPx)) s.mount(id, dropAt)
+      prevPx.current = partPx
     }
     const upHandler = () => {
       if (drag.current) endDrag()
@@ -156,6 +165,7 @@ function Draggable({ part }: { part: PartDef }) {
       // 부품이 바뀌어 언마운트되면 드래그도 끝난다
       if (drag.current) {
         drag.current = null
+        prevPx.current = null
         const s = store.getState()
         s.setDragTarget(null)
         s.setDragging(false)
@@ -180,6 +190,7 @@ function Draggable({ part }: { part: PartDef }) {
       const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, e.point)
       const offset = g.position.clone().sub(e.point)
       drag.current = { plane, offset, target: g.position.clone() }
+      prevPx.current = null
       store.getState().setDragging(true)
       document.body.style.cursor = 'grabbing'
     },

@@ -225,7 +225,9 @@ add({ id: 'cylinder_head', ko: '실린더 헤드', en: 'Cylinder Head', geometry
 add({ id: 'valve', ko: '밸브', en: 'Valve', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 3, radiusBottom: 3, height: 70, segments: 8 } }, { geometry: { type: 'cylinder', radiusTop: 13, radiusBottom: 13, height: 3, segments: 16 } }] },
   mount: tilt(0, 270, 0), rot: TILT_ROT, material: 'stainless', station: E, small: true,
   instances: [-56, -28, 28, 56].flatMap((z) => [{ suffix: `in${z}`, mount: tilt(-15, 270, z) }, { suffix: `ex${z}`, mount: tilt(15, 270, z) }]) })
-add({ id: 'camshaft', ko: '캠샤프트', en: 'Camshaft', geometry: { type: 'composite', children: [{ geometry: cylZ(11, 260) }, ...[-70, -14, 14, 70].map((z) => ({ geometry: cylZ(18, 12), position: [0, 0, z] as Vec3 }))] },
+// 샤프트 길이 200 → 끝이 z ±100. 캠 커버 밑단 벽(|z| 104) 안쪽으로 4mm 들어간다.
+// 260이면 양쪽으로 26mm씩 커버 밖으로 튀어나왔다. 208(벽과 딱 맞음)은 끝면이 벽과 같은 평면이라 겹쳐 보인다.
+add({ id: 'camshaft', ko: '캠샤프트', en: 'Camshaft', geometry: { type: 'composite', children: [{ geometry: cylZ(11, 200) }, ...[-70, -14, 14, 70].map((z) => ({ geometry: cylZ(18, 12), position: [0, 0, z] as Vec3 }))] },
   mount: tilt(0, 330, 0), rot: TILT_ROT, material: 'steel', station: E, small: true,
   instances: [{ suffix: 'intake', mount: tilt(-28, 330, 0) }, { suffix: 'exhaust', mount: tilt(28, 330, 0) }] })
 add({ id: 'cam_chain', ko: '캠체인', en: 'Cam Chain', geometry: { type: 'box', size: [14, 330, 6] }, mount: tilt(0, 0, 128), rot: TILT_ROT, material: 'chain', station: E, small: true })
