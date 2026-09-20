@@ -13,5 +13,3 @@ const GRIP_RAW: Vec3 = [...RIDE_MODEL.landmarksMm.gripRight] as Vec3
 export const STARTER_HOUSING: Vec3 = [GRIP_RAW[0], GRIP_RAW[1], GRIP_RAW[2] - 95]
 /** 오른쪽 그립 — 스로틀을 잡는 자리 */
 export const GRIP: Vec3 = GRIP_RAW
-/** 계기판 중심 — 카메라가 바라보는 점 */
-export const DASHBOARD: Vec3 = [...RIDE_MODEL.landmarksMm.dashboard] as Vec3

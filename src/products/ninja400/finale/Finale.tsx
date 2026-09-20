@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useAssembly, useAssemblyStore } from '../../../engine/context'
 import { requestCameraView } from '../../../engine/scene/controlsRef'
 import * as engineSound from '../audio/engineSound'
-import { RideModel } from '../render/RideModel'
+import { preloadRideModel, RideModel } from '../render/RideModel'
 import { IGNITION } from '../render/rideLayout'
 import { RideFog, RoadTiles } from '../render/RoadTiles'
 import { RideControls } from './RideControls'
@@ -12,10 +12,16 @@ import { Throttle } from './Throttle'
 
 /** 키(정규 부품)를 꽂은 뒤: 시동 버튼 → 스로틀. 실물 모델과 카메라도 여기서 얹는다. */
 export function NinjaFinale() {
-  // 엔진음 뱅크는 제품이 뜰 때 한 번만 받아 둔다 — 시동을 누르는 순간엔 이미 디코드가 끝나 있어야 한다.
-  // (AudioContext를 만들기만 하고 깨우지는 않으므로 사용자 제스처 정책에 걸리지 않는다)
+  // 엔진음 뱅크와 실물 모델(glb)은 제품이 뜰 때 한 번만 받아 둔다 — 시동을 누르는 순간, 키를 꽂는
+  // 순간엔 이미 디코드가 끝나 있어야 한다. glb preload를 RideModel 모듈 최상위가 아니라 여기서
+  // 부르는 이유는 그 모듈이 제품 목록을 통해 App에 정적으로 딸려 들어가기 때문이다 —
+  // 최상위면 닌자 400을 고르지도 않은 화면에서 5 MB를 내려받는다.
+  // 오디오 쪽은 suspended 상태의 AudioContext를 만들기만 한다. 소리를 내지 않으니 자동재생 정책에
+  // 막히지는 않지만, Chrome은 제스처 전에 만들어진 컨텍스트에 경고를 한 줄 남긴다.
+  // 실제 resume은 시동 버튼 클릭(engineSound.start)에서 일어난다.
   useEffect(() => {
     void engineSound.preload()
+    preloadRideModel()
   }, [])
   return (
     <>

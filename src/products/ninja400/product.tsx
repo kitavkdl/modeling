@@ -8,14 +8,14 @@ import { PARTS, PROPS, STATIONS } from './parts'
 import { EngineShake } from './render/EngineShake'
 import { Lamps } from './render/Lamps'
 import { Paintable } from './render/Paintable'
-import { rideModelFailed } from './render/RideModel'
+import { rideModelFailed, rideModelReady } from './render/RideModel'
 import { RIDE_MODEL } from './render/rideLayout.generated'
 import { LeverPivot, ShiftLever, Spinner } from './render/RideParts'
 
 /** 켜지는 부품 */
 const LAMP_IDS = new Set(['headlight', 'taillight', 'instrument_cluster'])
-/** 뒷바퀴와 함께 도는 부품 */
-const SPIN_IDS = new Set(['rear_wheel', 'rear_sprocket'])
+/** 속도에 맞춰 도는 부품 (앞바퀴는 반지름이 달라 Spinner가 부품 id로 rpm을 고른다) */
+const SPIN_IDS = new Set(['front_wheel', 'rear_wheel', 'rear_sprocket'])
 
 export const ninja400Product: ProductDef = {
   id: 'ninja400',
@@ -51,8 +51,10 @@ export const ninja400Product: ProductDef = {
   phasesAfterComplete: ['keyed', 'running'],
   // 키 하나만 남는 순간부터 절차 조립체를 감춘다 — 그 자리에 실물 모델(RideModel)이 서고
   // 키는 실물 모델의 키 구멍에 꽂는다. 고스트와 드래그는 엔진이 그대로 살려 둔다.
-  // 실물 모델을 못 띄웠으면(rideModelFailed) 숨기지 않는다 — 빈 화면 대신 절차 조립체를 그대로 쓴다
-  assemblyHidden: (s) => !rideModelFailed() && (s.phase !== 'assembly' || onlyKeyLeft(s.mounted, PARTS)),
+  // 실물 모델이 아직 디코드되지 않았거나(rideModelReady) 못 띄웠으면(rideModelFailed) 숨기지 않는다 —
+  // 빈 무대 대신 절차 조립체를 그대로 쓴다.
+  assemblyHidden: (s) =>
+    rideModelReady() && !rideModelFailed() && (s.phase !== 'assembly' || onlyKeyLeft(s.mounted, PARTS)),
   // 조립체를 감춘 뒤에도 키는 그린다 — 실물 모델의 키 구멍(IGNITION)에 꽂히는 것이 보여야 한다
   alwaysVisibleParts: ['ignition_key'],
   credits: [

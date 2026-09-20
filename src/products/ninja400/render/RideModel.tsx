@@ -21,14 +21,25 @@ const RAD_PER_RPM = (2 * Math.PI) / 60
 /** 탭 전환 등으로 프레임이 밀렸을 때 회전이 튀지 않게 */
 const MAX_DT = 0.1
 
-// 조립하는 동안 미리 받아 둔다 — 키를 꽂는 순간에는 이미 디코드가 끝나 있어야 한다.
-// meshopt 디코더는 drei가 기본으로 붙여 준다(useGLTF의 useMeshopt 기본값 true).
-useGLTF.preload(URL)
+/**
+ * 조립하는 동안 미리 받아 둔다 — 키를 꽂는 순간에는 이미 디코드가 끝나 있어야 한다.
+ * meshopt 디코더는 drei가 기본으로 붙여 준다(useGLTF의 useMeshopt 기본값 true).
+ *
+ * 모듈 최상위에서 부르지 않는 이유: 이 모듈은 product.tsx → products/index.ts → App.tsx로
+ * 정적으로 딸려 들어간다. 최상위 preload면 닌자 400을 고르지도 않은 '/'와 '/keyboard'에서
+ * 5 MB짜리 glb를 내려받는다. 제품이 뜰 때(NinjaFinale의 effect) 한 번만 부른다.
+ */
+export function preloadRideModel(): void {
+  useGLTF.preload(URL)
+}
 
-const status = { failed: false }
+const status = { failed: false, ready: false }
 
 /** 실물 모델을 못 띄웠는가. 한 번 실패하면 새로고침 전까지 유지된다 */
 export const rideModelFailed = (): boolean => status.failed
+
+/** 디코드가 끝나 실물 모델을 당장 그릴 수 있는가 */
+export const rideModelReady = (): boolean => status.ready
 
 /**
  * 실패를 기록한다. 제품의 assemblyHidden이 이 값을 보고 절차 조립체를 도로 보여 준다.
@@ -40,19 +51,37 @@ export function markRideModelFailed(store?: AssemblyStore): void {
   store?.setState({})
 }
 
-/** 실물 모델. 보일 조건은 제품의 assemblyHidden과 같다 (조립체가 사라진 자리에 선다) */
+/**
+ * 디코드 완료를 기록한다. 이게 켜지기 전에는 assemblyHidden이 조립체를 감추지 않는다 —
+ * 아니면 키만 남는 순간 조립체는 사라졌는데 실물 모델은 아직 없는 빈 무대가 된다.
+ * 깨우는 방법은 markRideModelFailed와 같다.
+ */
+export function markRideModelReady(store?: AssemblyStore): void {
+  if (status.ready) return
+  status.ready = true
+  store?.setState({})
+}
+
+/**
+ * 실물 모델. 로더(useGLTF)는 제품이 떠 있는 동안 늘 건다 — 보일 때만 걸면
+ * "준비돼야 조립체를 감추고, 감춰야 로더를 건다"는 순환이 되어 영영 뜨지 않는다.
+ * 보이고 말고는 group.visible로만 가른다 (보일 조건은 제품의 assemblyHidden).
+ */
 export function RideModel() {
   const product = useProduct()
   const store = useAssemblyStore()
   const visible = useAssembly((s) => isAssemblyHidden(product, s))
   return (
     <RideModelBoundary store={store}>
-      <Suspense fallback={null}>{visible ? <RideScene /> : null}</Suspense>
+      <Suspense fallback={null}>
+        <RideScene visible={visible} />
+      </Suspense>
     </RideModelBoundary>
   )
 }
 
-function RideScene() {
+function RideScene({ visible }: { visible: boolean }) {
+  const store = useAssemblyStore()
   const { scene } = useGLTF(URL)
   const start = useRef(0)
   const fading = useRef(true)
@@ -65,7 +94,8 @@ function RideScene() {
       const hit = byOriginal.get(m)
       if (hit) return hit
       const c = m.clone()
-      // 원본이 BLEND로 내보내졌어도 차체는 불투명이다 — depthWrite가 꺼진 채면 뒤에 그려지는 바닥이 차체를 덮는다
+      // 원본이 BLEND로 내보내졌어도 차체는 불투명이다 — depthWrite가 꺼진 채면 뒤에 그려지는 바닥이 차체를 덮는다.
+      // 페이드 중에만 잠깐 끄고(아래 effect) 끝나면 이 값으로 돌아온다.
       c.depthWrite = true
       byOriginal.set(m, c)
       return c
@@ -84,21 +114,34 @@ function RideScene() {
     }
   }, [scene])
 
-  // 보일 때마다 처음부터 페이드한다. clone은 여기서 만들지 않으므로 다시 보여도 늘어나지 않는다.
+  // 여기까지 렌더됐다는 것은 Suspense가 풀렸다는 것 — 디코드가 끝났다.
   useEffect(() => {
-    start.current = 0
-    fading.current = true
-    for (const m of materials) {
-      m.transparent = true
-      m.opacity = 0
-      m.needsUpdate = true
-    }
+    markRideModelReady(store)
+  }, [store])
+
+  // 재마운트마다 useMemo가 다시 clone하므로, 이전 세대는 여기서 dispose한다.
+  useEffect(() => {
     return () => {
       for (const m of materials) m.dispose()
     }
   }, [materials])
 
+  // 보일 때마다 처음부터 페이드한다. 반투명한 동안은 depthWrite를 끈다 —
+  // 켜 둔 채면 아직 안 보이는 차체가 깊이만 써서 뒤의 바닥에 차 모양 구멍이 뚫린다.
+  useEffect(() => {
+    if (!visible) return
+    start.current = 0
+    fading.current = true
+    for (const m of materials) {
+      m.transparent = true
+      m.opacity = 0
+      m.depthWrite = false
+      m.needsUpdate = true
+    }
+  }, [materials, visible])
+
   useFrame((_, raw) => {
+    if (!visible) return
     const dt = Math.min(raw, MAX_DT)
 
     if (fading.current) {
@@ -110,6 +153,7 @@ function RideScene() {
         for (const m of materials) {
           m.transparent = false
           m.opacity = 1
+          m.depthWrite = true
           m.needsUpdate = true
         }
       }
@@ -122,7 +166,11 @@ function RideScene() {
     if (wheelRear) wheelRear.rotation.z -= wheelRpm(ride.speed) * RAD_PER_RPM * dt
   })
 
-  return <primitive object={scene} />
+  return (
+    <group visible={visible}>
+      <primitive object={scene} />
+    </group>
+  )
 }
 
 /** 모델을 못 받거나 디코드가 실패하면 실패를 기록하고 조용히 빠진다 — 경고는 한 번만 */

@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useAssembly, useProduct } from '../context'
-import { canSkip, canUndo, isPartComplete } from '../store'
+import { canSkip, canUndo, isAssemblyHidden, isPartComplete } from '../store'
 import { VariantPicker } from './VariantPicker'
 
 const FOCUSED_INPUT_TAGS = new Set(['INPUT', 'TEXTAREA', 'SELECT'])
@@ -33,7 +33,13 @@ export function Hud({ onBack }: { onBack: () => void }) {
   const skippable = useAssembly((s) => canSkip(s))
   // 버튼과 Ctrl+Z 둘 다 스토어와 같은 규칙을 쓴다 (phaseOnMount 단계에서도 한 수는 물린다)
   const undoable = useAssembly((s) => canUndo(s))
+  // 조립체를 감췄다는 것은 제품이 외부 에셋(실물 모델)을 세웠다는 뜻이다. 셀렉터로 읽어야
+  // 모델이 준비돼 조건이 뒤집히는 순간(빈 setState)에도 여기까지 다시 돈다.
+  const assemblyHidden = useAssembly((s) => isAssemblyHidden(product, s))
   const hint = useHint()
+
+  // 조립 중이라도 실물 모델이 이미 서 있으면 출처를 보여야 한다 (라이선스 의무)
+  const showCredits = phase !== 'assembly' || assemblyHidden
 
   const doneCount = product.parts.filter((p) => isPartComplete(mounted, p)).length
   const selected = selectedPartId ? product.parts.find((p) => p.id === selectedPartId) ?? null : null
@@ -95,8 +101,8 @@ export function Hud({ onBack }: { onBack: () => void }) {
         ) : null}
       </div>
 
-      {/* 라이선스 의무: 외부 에셋을 쓴 제품은 조립 이후 단계에서 출처를 계속 보여 준다 */}
-      {product.credits?.length && phase !== 'assembly' ? (
+      {/* 라이선스 의무: 외부 에셋을 쓴 제품은 그 에셋이 화면에 있는 동안 출처를 계속 보여 준다 */}
+      {product.credits?.length && showCredits ? (
         <div className="hud hud-credits">
           {product.credits.map((c, i) => (
             <span key={i}>

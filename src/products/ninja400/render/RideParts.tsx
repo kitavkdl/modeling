@@ -4,7 +4,7 @@ import type * as THREE from 'three'
 import { useMaterials } from '../../../engine/context'
 import { PartGeometry } from '../../../engine/geometry/PartGeometry'
 import { MM, type RenderInstanceCtx } from '../../../engine/types'
-import { wheelRpm } from '../finale/rideModel'
+import { frontWheelRpm, wheelRpm } from '../finale/rideModel'
 import { ride } from '../finale/rideState'
 
 // 주행 중에 움직이는 부품들. 전부 ride 싱글턴을 매 프레임 읽기만 한다.
@@ -55,13 +55,18 @@ export function LeverPivot(ctx: RenderInstanceCtx) {
   )
 }
 
-/** 뒷바퀴·리어 스프로킷. 둘 다 축이 z라 z로 돌린다 (앞으로 굴러가는 방향은 -z 회전) */
+/**
+ * 앞·뒷바퀴와 리어 스프로킷. 전부 축이 z라 z로 돌린다 (앞으로 굴러가는 방향은 -z 회전 —
+ * RideModel의 실물 바퀴와 같은 부호). 앞 타이어는 반지름이 작아 같은 속도에서 더 빨리 돈다.
+ */
 export function Spinner(ctx: RenderInstanceCtx) {
   const spin = useRef<THREE.Group>(null)
+  const front = ctx.part.id === 'front_wheel'
   useFrame((_, raw) => {
     const g = spin.current
     if (!g || ride.speed === 0) return
-    g.rotation.z -= wheelRpm(ride.speed) * RAD_PER_RPM * Math.min(raw, MAX_DT)
+    const rpm = front ? frontWheelRpm(ride.speed) : wheelRpm(ride.speed)
+    g.rotation.z -= rpm * RAD_PER_RPM * Math.min(raw, MAX_DT)
   })
   return (
     <group ref={spin}>

@@ -518,7 +518,12 @@ const rideJson = {
   landmarksMm: info.landmarksMm,
   source: SOURCE,
 }
-writeFileSync(join(outDir, 'ride.json'), `${JSON.stringify(rideJson, null, 2)}\n`)
+// ride.json은 런타임이 읽지 않는다(값은 rideLayout.generated.ts로 들어간다). public/에 두면
+// 빌드 산출물에 그대로 실려 나가므로, 원본 모델을 둔 git-ignored 디렉터리에 적는다.
+const RAW_DIR = 'ninja400'
+mkdirSync(RAW_DIR, { recursive: true })
+const rideJsonPath = join(RAW_DIR, 'ride.json')
+writeFileSync(rideJsonPath, `${JSON.stringify(rideJson, null, 2)}\n`)
 
 const vec = (v) => `[${v.map((n) => n.toFixed(1)).join(', ')}]`
 const ts = `// 생성 파일 — scripts/prepare-ride-model.mjs가 만든다. 손으로 고치지 않는다.
@@ -566,7 +571,7 @@ console.log(`  제외: ${info.excluded.join(', ') || '없음'}`)
 console.log('\n랜드마크 (mm)')
 for (const [k, v] of Object.entries(rideJson.landmarksMm)) console.log(`  ${k.padEnd(12)} ${vec(v)}`)
 console.log(`\n${info.glbPath} ${(info.bytes / 1e6).toFixed(2)} MB (상한 12 MB)`)
-console.log(`${join(outDir, 'ride.json')} · src/products/ninja400/render/rideLayout.generated.ts 갱신`)
+console.log(`${rideJsonPath} (빌드 산출물 밖) · src/products/ninja400/render/rideLayout.generated.ts 갱신`)
 if (tooBig) {
   console.error(
     `\nglb가 상한을 넘었다: ${(info.bytes / 1e6).toFixed(2)} MB > 12 MB (텍스처 ${tex}px` +

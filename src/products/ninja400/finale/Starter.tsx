@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import type * as THREE from 'three'
 import { useAssembly, useAssemblyStore, useMaterials } from '../../../engine/context'
@@ -70,6 +70,13 @@ export function Starter() {
   const onPointerOut = useCallback(() => {
     setHover(false)
     document.body.style.cursor = ''
+  }, [])
+
+  // 호버한 채로 사라지면(실행 취소·초기화·단계 전환) onPointerOut이 오지 않아 포인터 커서가 남는다
+  useEffect(() => {
+    return () => {
+      document.body.style.cursor = ''
+    }
   }, [])
 
   useFrame((_, dt) => {
