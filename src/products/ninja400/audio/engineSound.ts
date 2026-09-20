@@ -6,13 +6,14 @@
 //   활성 칸 ┬ 보이스A ─ lvlA(±2 dB LFO 0.13 Hz) ┐
 //           └ 보이스B ─ lvlB(±2 dB LFO 0.17 Hz) ┤ slotGain ┐
 //   교체 중인 칸 (같은 모양) ─────────────────────────────┴→ loopMix
-//   loopMix → loopShelf(150 Hz, 7000 rpm 위로 +3 dB) ┐
-//   고회전 몸통 (정현파 6 + 공진 LPF + tanh) ────────┤
-//   흡기 그로울 (대역잡음 × 점화주파수 AM) ──────────┤
-//   감속 버블 (300 Hz 짧은 팝) ──────────────────────┴→ loopBus(시동·정지 페이드)
-//   loopBus → loadShelf(120 Hz, 부하 +1.5 dB) → antiAlias(9k, 피치업 1.4배 위에서 7k)
+//   loopMix(600 rpm 0 → 1300 rpm 1) → loopShelf(150 Hz, 7000 rpm 위로 +3 dB) ┐
+//   고회전 몸통 (정현파 6 + 공진 LPF + tanh) ──────────────────────────────┤
+//   흡기 그로울 (대역잡음 × 점화주파수 AM) ────────────────────────────────┤
+//   감속 버블 (300 Hz 짧은 팝) ────────────────────────────────────────────┴→ loopBus(시동·정지 페이드)
+//   loopBus → limiterCut(리미터 스터터 −8 dB/40 ms) → loadShelf(120 Hz, 부하 +1.5 dB)
+//           → antiAlias(9k, 피치업 1.4배 위에서 7k)
 //           → tone(lowpass, Q는 부하가 낮춘다) → toneGain → master(0.19) → compressor → destination
-//   start.ogg / stop.ogg 원샷 ─────────────────────────────────────────→ master ┘
+//   start.ogg / stop.ogg 원샷 → 제 lowpass(2200 Hz) → 제 gain(톤 게인 추종) → master ┘
 //
 // v5.1에서 고친 것 — 헤드룸:
 //   master가 0.8이던 때 9000 rpm 전개·물린 기어의 피크가 +9.6 dBFS로 나갔다(아래 MASTER_GAIN의
@@ -20,6 +21,25 @@
 //   아이들과 전개의 차이가 사라졌다 — "무슨 짓을 해도 같은 크기"다. master를 0.19로 내려
 //   피크를 −3 dBFS에 두고, 컴프레서는 −10 dB/4:1로 느슨하게 잡아 과도부만 받게 했다.
 //   대신 아이들이 −34 dBFS 아래로 내려가서 닫힌 스로틀의 톤 바닥을 −7 → −5 dB로 올렸다.
+//
+// v5.2에서 고친 것 — 원샷 레벨과 스톨 연출:
+//   원샷이 master로 직결돼 있었다. 루프는 닫힌 스로틀에서 톤 게인 −5 dB와 1100 Hz 저역통과를
+//   지나는데 원샷은 둘 다 건너뛰었으므로, 스톨 순간 stop.ogg가 아이들 루프보다
+//   **평탄 +3.2 dB · A가중 +16.4 dB** 위로 나갔다 (200 ms 단기 RMS, 실제 ogg를 렌더해 잰 값).
+//   A가중 차이가 큰 것은 1100 Hz 저역통과가 루프에서 귀가 가장 밝게 듣는 1~5 kHz를 통째로
+//   깎아 내는데 원샷은 그대로 나갔기 때문이다 — 사용자가 말한 "갑자기 커진다"가 이것이다.
+//   이제 원샷마다 제 게인(톤 게인 추종)과 제 저역통과를 달아 내보낸다.
+//   러깅 스톨은 그 위에 죽어가는 연출을 얹는다: playbackRate를 0.4까지 끌어내리고
+//   톤 저역통과를 300 Hz로 쓸어 내리며 0.25초에 걸쳐 내린 뒤, stop.ogg를 −10 dB 더 낮춰
+//   1100 Hz로 닫아 울린다 → 아이들 대비 **평탄 −13.1 dB · A가중 −3.7 dB**.
+//   리미터(11,900 rpm 위에서 회전이 꺾일 때)에는 40 ms −8 dB 컷을 초당 12번까지 넣어
+//   연료 컷의 "밥-밥-밥"을 만든다.
+//   시동 쪽은 두 가지를 맞췄다 — (1) 루프는 600 rpm 아래에서 아예 0이다. 스타터가 300 rpm으로
+//   돌리는 동안 playbackRate 0.23짜리 늘어진 테이프가 새어 나오던 자리를 회전으로 직접 막는다.
+//   (2) start.ogg 안의 점화(0.8초 지점)를 물리의 점화(rideModel.CRANK_S)에 앉힌다 —
+//   시간만 믿고 0.8초에 루프를 올리던 때는 바늘이 아이들로 뛴 뒤에도 0.2초 동안 스타터만 울었다.
+//   부하는 0.15초 시정수로 흘려 보낸다 — 클러치를 잡는 순간 톤 +3 dB와 셸프 +1.5 dB가
+//   스로틀 시정수(30 ms)로 함께 무너져 계단으로 들렸다.
 //
 // 매 tick(25 ms)마다 pickLoop로 칸 하나를 고르고, 그 소스들의 playbackRate를 rpm/루프rpm으로
 // 끌고 간다. 칸이 바뀔 때만 새 칸을 걸고 0.25초 등파워 교차 페이드한 뒤 옛 칸을 끊는다.
@@ -36,7 +56,7 @@
 //
 // rpm은 바깥(주행 모델)에서 setRpm으로 들어온다.
 
-import { IDLE_RPM } from '../finale/rideModel'
+import { CRANK_S, IDLE_RPM } from '../finale/rideModel'
 import {
   antiAliasHz,
   clamp01,
@@ -90,11 +110,53 @@ const MASTER_GAIN = 0.19
  * 전개 RMS가 −19.9 dBFS라 무릎 아래(−16 dB)에 있어서 정상 주행에는 아예 걸리지 않는다.
  */
 export const COMPRESSOR = { threshold: -10, knee: 12, ratio: 4, attack: 0.005, release: 0.12 } as const
-/** stop()의 루프 페이드아웃 (초) */
+/** stop()의 루프 페이드아웃 (초) — 키를 끈 경우 */
 const STOP_FADE_S = 0.15
-/** start.ogg가 점화에 닿는 시점(초)과 루프 페이드인 길이(초) */
-const START_DELAY_S = 0.8
+/**
+ * start.ogg 안에서 점화가 오는 시점 (초). 파일의 성질이다 —
+ * build-engine-bank.py가 크랭킹 시작부터 점화 0.4초 뒤까지 잘라 두었고, 1.012초 중 0.8초가 점화다.
+ */
+const CRANK_ONSET_S = 0.8
+/** 루프 페이드인 길이 (초) */
 const START_FADE_S = 0.3
+/**
+ * 원샷(시동·정지)이 지나는 저역통과 (Hz, Q). 루프가 지나는 톤 필터(닫힌 스로틀 1100 Hz)를
+ * 한 옥타브 열어 둔 자리다 — 크랭킹은 배기음이 아니라 스타터·기계음이라 톤과 같은 자리까지
+ * 닫으면 먹먹해진다. 그래도 4 kHz 위를 덮어야 A가중 레벨이 루프와 같은 눈금에 선다.
+ */
+const ONE_SHOT_HZ = 2200
+const ONE_SHOT_Q = 0.7
+/** 스톨 원샷은 톤과 같은 자리까지 닫는다 (Hz) — 죽은 엔진의 마지막 소리는 배기음이다 */
+const STALL_ONE_SHOT_HZ = 1100
+/** 스톨 원샷에 더 주는 감쇠 (dB). 스톨은 아이들보다 **조용해야** 한다 */
+const STALL_ONE_SHOT_DB = -10
+/** 러깅 스톨 연출: 루프 페이드(초) · playbackRate가 내려갈 바닥 · 쓸어 내릴 저역통과(Hz) */
+const STALL_FADE_S = 0.25
+const STALL_RATE_FLOOR = 0.4
+const STALL_LPF_HZ = 300
+/**
+ * 리미터 스터터. 물리(rideModel)의 소프트 컷은 11,700~12,000을 약 12 Hz로 오간다 —
+ * 회전이 11,900 위에서 꺾이는 순간마다 40 ms 동안 −8 dB를 파서 "밥-밥-밥"을 만든다.
+ * tick이 40 Hz라 실제로는 초당 4~8번쯤 걸리고, 상한을 12/s로 못박아 둔다.
+ */
+const LIMIT_CUT_RPM = 11900
+const LIMIT_CUT_DB = -8
+const LIMIT_CUT_S = 0.04
+const LIMIT_CUT_ATTACK_S = 0.004
+const LIMIT_CUT_RELEASE_S = 0.012
+const LIMIT_CUT_MAX_HZ = 12
+/**
+ * 크랭킹 회전 (rpm). 이 아래에서는 루프를 아예 내린다 — 스타터가 300 rpm으로 돌리는 동안
+ * 루프를 틀면 playbackRate 0.23짜리 "늘어진 테이프"가 되고, 그 소리는 실차에 없다.
+ * 그 구간은 start.ogg(크랭킹 원샷)가 통째로 맡는다.
+ */
+const CRANK_MUTE_RPM = 600
+/**
+ * 부하(rideLoad) 평활 시정수 (초). 클러치를 잡는 순간 부하가 1 → 0으로 떨어지면
+ * 톤 게인의 부하분(+3 dB)과 저역 셸프(+1.5 dB)가 함께 무너져 계단으로 들렸다.
+ * 클러치 레버 자체가 0.12초라 소리 쪽에서 0.15초를 더 얹어 4.5 dB를 0.27초에 걸쳐 흘린다.
+ */
+const LOAD_TAU = 0.15
 /** 정지 페이드가 남아 있을 때 시동을 걸면 버스를 0으로 끌어내리는 시간 (초) — 0으로 점프하면 딸깍한다 */
 const BUS_DROP_S = 0.02
 /** stop() 뒤 컨텍스트를 재우기 전 여유 (초) */
@@ -153,6 +215,96 @@ export function safeRpm(rpm: number): number {
   return Number.isFinite(rpm) && rpm > 0 ? rpm : 0
 }
 
+/**
+ * 1차 시정수 응답. 부하 평활처럼 tick 간격이 들쭉날쭉한 자리에 쓴다
+ * (setTargetAtTime과 달리 값이 우리 쪽에 남아야 blip의 기준도 같이 따라온다).
+ */
+export function smoothTo(current: number, target: number, dt: number, tau: number): number {
+  if (!Number.isFinite(target)) return Number.isFinite(current) ? current : 0
+  if (!Number.isFinite(current)) return target
+  if (!Number.isFinite(dt) || dt <= 0 || !Number.isFinite(tau) || tau <= 0) return target
+  return current + (target - current) * (1 - Math.exp(-dt / tau))
+}
+
+/**
+ * 아이들 아래에서 루프에 거는 배율. 회전이 떨어지면 소리도 같이 작아져야 한다 —
+ * playbackRate만 내려가면 "테이프가 늘어지는" 소리가 같은 크기로 남는다.
+ *
+ * IDLE_RPM(1300) 위는 1, CRANK_MUTE_RPM(600) 아래는 0, 사이는 선형이다.
+ * 바닥을 0이 아니라 600에 둔 덕에 두 가지를 한 번에 막는다 —
+ *   (1) 죽어가는 엔진이 회전과 함께 작아진다 (900 rpm이면 −7.4 dB).
+ *   (2) 시동을 거는 동안(스타터가 300 rpm으로 돌린다) 루프가 아예 나오지 않는다.
+ *       루프 페이드인 시각에만 기대면 물리 쪽 크랭킹 길이가 바뀔 때마다
+ *       늘어진 테이프가 새어 나온다. 여기서 회전으로 직접 막아 둔다.
+ */
+export function subIdleGain(rpm: number): number {
+  const r = safeRpm(rpm)
+  if (r <= CRANK_MUTE_RPM) return 0
+  if (r >= IDLE_RPM) return 1
+  return (r - CRANK_MUTE_RPM) / (IDLE_RPM - CRANK_MUTE_RPM)
+}
+
+/** 스톨이 끌어내릴 playbackRate — 지금 값보다 올라가지는 않는다 */
+export function stallRate(rate: number): number {
+  const r = Number.isFinite(rate) && rate > 0 ? rate : STALL_RATE_FLOOR
+  return r < STALL_RATE_FLOOR ? r : STALL_RATE_FLOOR
+}
+
+/**
+ * 지금 리미터 컷을 하나 팔 때인가. 회전이 LIMIT_CUT_RPM 위에 있고 **떨어지는 중**일 때만이다 —
+ * 올라가며 리미터를 치는 순간에는 아직 연료가 붙어 있다. lastCutAt으로 초당 개수를 묶는다.
+ */
+export function limiterCutDue(rpm: number, dRpm: number, now: number, lastCutAt: number): boolean {
+  if (!Number.isFinite(rpm) || !Number.isFinite(dRpm) || !Number.isFinite(now)) return false
+  if (rpm <= LIMIT_CUT_RPM || dRpm >= 0) return false
+  if (!Number.isFinite(lastCutAt) || lastCutAt <= 0) return true
+  return now - lastCutAt >= 1 / LIMIT_CUT_MAX_HZ
+}
+
+/** 원샷 종류 — 크랭크 · 키 끄기 · 스톨 */
+export type OneShotKind = 'crank' | 'keyOff' | 'stall'
+
+/**
+ * 원샷 하나를 어떤 레벨·음색으로 울릴지.
+ *
+ * 게인은 **지금 톤 게인을 그대로 따라간다** — 루프가 −5 dB로 나가는 동안 원샷만 0 dB로
+ * 나가면 그 자리에서 소리가 튄다. 스톨은 거기서 −10 dB를 더 빼고 저역통과도 톤과 같은
+ * 1100 Hz까지 닫아, 아이들 루프보다 확실히 아래에 둔다.
+ */
+export function oneShotVoicing(
+  kind: OneShotKind,
+  throttle: number,
+  load: number,
+): { gain: number; lowpassHz: number; delayS: number } {
+  // 죽은 엔진에는 스로틀도 부하도 없다 — 스톨은 늘 닫힌 스로틀의 톤(−5 dB)에서 −10 dB다
+  if (kind === 'stall') {
+    return {
+      gain: toneFor(0, 0).gain * dbToGain(STALL_ONE_SHOT_DB),
+      lowpassHz: STALL_ONE_SHOT_HZ,
+      delayS: STALL_FADE_S,
+    }
+  }
+  return { gain: toneFor(throttle, load).gain, lowpassHz: ONE_SHOT_HZ, delayS: 0 }
+}
+
+/**
+ * 크랭크 원샷을 버퍼의 어디서부터 울리고 루프를 언제 올릴지 (초). 시계 둘을 맞추는 일이다 —
+ *
+ *   · 녹음 안의 점화는 CRANK_ONSET_S(0.8초)에 온다.
+ *   · 물리(rideModel)의 스타터는 physicsCrankS 동안 연소 없이 300 rpm으로만 돌리다 그때 붙는다.
+ *
+ * 그래서 녹음의 앞을 (CRANK_ONSET_S − physicsCrankS)만큼 잘라 내고 루프는 physicsCrankS에 올린다.
+ * 어긋난 채 두면 계기 바늘이 아이들로 뛰는 동안 0.2초쯤 스타터 소리만 나고 엔진은 조용하다.
+ * 물리 쪽 크랭킹 길이가 바뀌어도(범프 스타트가 붙는 등) 여기가 따라간다.
+ */
+export function crankPlan(bufferS: number, physicsCrankS: number): { offsetS: number; delayS: number } {
+  const dur = Number.isFinite(bufferS) && bufferS > 0 ? bufferS : 0
+  const crank = Number.isFinite(physicsCrankS) && physicsCrankS > 0 ? physicsCrankS : CRANK_ONSET_S
+  const want = Math.max(0, CRANK_ONSET_S - crank)
+  const offsetS = dur > 0 ? Math.min(want, dur) : 0
+  return { offsetS, delayS: Math.max(0, CRANK_ONSET_S - offsetS) }
+}
+
 /** 스로틀·부하가 정하는 머플러 저역통과(Hz·Q)와 톤 게인(선형) */
 export function toneFor(throttle: number, load: number): { lowpassHz: number; gain: number; q: number } {
   const th = clamp01(throttle)
@@ -199,14 +351,38 @@ export function throttleTau(next: number, prev: number): number {
   return clamp01(next) > clamp01(prev) ? TONE_TAU_OPEN : TONE_TAU_CLOSE
 }
 
+export interface StopPlan {
+  fade: boolean
+  oneShot: boolean
+  /** 러깅 스톨인가 — 키를 끈 것이 아니라 엔진이 죽은 것 */
+  stall: boolean
+  /** 루프를 내리는 시간 (초) */
+  fadeS: number
+  /** 원샷을 이만큼 늦춰 울린다 (초) */
+  oneShotDelayS: number
+  suspendAfterS: number
+}
+
 /**
  * stop()이 실제로 할 일. 돌고 있지 않으면 전부 아니오 — 두 번째 stop()은 소리도 예약도 남기지 않는다.
  * (스톨 때 RideControls가 한 번, running에서 빠져나갈 때 Finale이 또 한 번 부른다)
+ *
+ * stall이면 죽어가는 연출에 시간을 더 준다 — 0.25초에 걸쳐 내리고, 그 뒤에야 마지막 원샷이 온다.
  */
-export function stopPlan(running: boolean, stopSoundS: number): { fade: boolean; oneShot: boolean; suspendAfterS: number } {
-  if (!running) return { fade: false, oneShot: false, suspendAfterS: 0 }
-  // stop.ogg가 끝나기 전에 재우면 잘린다 — 페이드와 원샷 중 긴 쪽을 기다린다
-  return { fade: true, oneShot: true, suspendAfterS: Math.max(STOP_FADE_S + SLOT_FADE_S, stopSoundS) + SUSPEND_PAD_S }
+export function stopPlan(running: boolean, stopSoundS: number, stall = false): StopPlan {
+  if (!running) return { fade: false, oneShot: false, stall: false, fadeS: 0, oneShotDelayS: 0, suspendAfterS: 0 }
+  const fadeS = stall ? STALL_FADE_S : STOP_FADE_S
+  const oneShotDelayS = stall ? STALL_FADE_S : 0
+  const dur = Number.isFinite(stopSoundS) && stopSoundS > 0 ? stopSoundS : 0
+  // stop.ogg가 끝나기 전에 재우면 잘린다 — 페이드와 원샷(지연 포함) 중 긴 쪽을 기다린다
+  return {
+    fade: true,
+    oneShot: true,
+    stall,
+    fadeS,
+    oneShotDelayS,
+    suspendAfterS: Math.max(fadeS + SLOT_FADE_S, oneShotDelayS + dur) + SUSPEND_PAD_S,
+  }
 }
 
 /**
@@ -265,6 +441,8 @@ let loopMix: GainNode | null = null
 let loopShelf: BiquadFilterNode | null = null
 /** 루프와 합성 층이 모두 지나가는 버스 — start/stop 페이드가 여기에 걸린다 (원샷은 영향받지 않는다) */
 let loopBus: GainNode | null = null
+/** 리미터 연료 컷이 파는 홈 — loopBus 뒤라 합성 층까지 같이 끊긴다 (start/stop 페이드와 안 싸운다) */
+let limiterCut: GainNode | null = null
 let loadShelf: BiquadFilterNode | null = null
 let antiAlias: BiquadFilterNode | null = null
 let toneLPF: BiquadFilterNode | null = null
@@ -289,10 +467,18 @@ let lastLevel = 0
 let rpmLevel = 0
 /** 물린 기어가 거는 부하 0~1 */
 let loadLevel = 0
+/** 톤·저역 셸프가 실제로 쓰는 평활한 부하 (LOAD_TAU). 계단으로 떨어지지 않게 */
+let loadSmooth = 0
 /** 평활한 d(rpm)/dt (rpm/s)와 그것을 재는 데 쓰는 직전 tick의 값 */
 let dRpm = 0
 let lastRpm = 0
 let lastTickAt = 0
+/** 마지막으로 0이 아닌 rpm — stop()이 스톨인지 키 끄기인지 가리는 데 쓴다 */
+let lastLiveRpm = 0
+/** 마지막 리미터 컷 시각 (ctx.currentTime). 초당 개수를 묶는다 */
+let lastCutAt = 0
+/** 아직 울리지 않은 원샷 — 스톨 연출 중에 다시 시동을 걸면 거둬야 한다 */
+const pendingOneShots: AudioBufferSourceNode[] = []
 /** blip() 제스처가 끝나는 시각 — 그때까지 tick()은 톤 게인을 건드리지 않는다 */
 let blipUntil = 0
 
@@ -351,9 +537,13 @@ function audioContext(): AudioContext | null {
   loadShelf.frequency.value = LOAD_SHELF_HZ
   loadShelf.gain.value = 0
   loadShelf.connect(antiAlias)
+  // 리미터 연료 컷이 파는 홈. loopBus 뒤에 두어야 start/stop 페이드의 자동화와 겹치지 않는다
+  limiterCut = ctx.createGain()
+  limiterCut.gain.value = 1
+  limiterCut.connect(loadShelf)
   loopBus = ctx.createGain()
   loopBus.gain.value = 0
-  loopBus.connect(loadShelf)
+  loopBus.connect(limiterCut)
   // 고회전에서 루프에만 주는 저역 셸프 — 합성 층은 이미 제 저역을 갖고 있어 지나지 않는다
   loopShelf = ctx.createBiquadFilter()
   loopShelf.type = 'lowshelf'
@@ -420,15 +610,51 @@ function holdLoopBus(now: number) {
   }
 }
 
-/** 원샷(시동·정지)은 톤을 거치지 않고 master로 바로 간다 */
-function playOneShot(buf: AudioBuffer | null | undefined) {
+/**
+ * 원샷(시동·정지). 루프의 톤 체인은 지나지 않지만 **제 게인과 제 저역통과를 하나씩 달고** 나간다 —
+ * 예전처럼 master로 직결하면 닫힌 스로틀의 −5 dB와 1100 Hz 저역통과를 통째로 건너뛰어
+ * 스톨 순간 아이들보다 A가중 +16 dB로 튀었다(파일 머리 v5.2 참조).
+ * 노드는 원샷마다 새로 만든다 — 시동·정지가 겹쳐도 서로의 설정을 덮어쓰지 않는다.
+ */
+function playOneShot(
+  buf: AudioBuffer | null | undefined,
+  voicing: { gain: number; lowpassHz: number; delayS: number },
+  offsetS = 0,
+) {
   const ac = ctx
   if (!ac || !master || !buf) return
+  const at = ac.currentTime + Math.max(0, voicing.delayS)
+  const g = ac.createGain()
+  g.gain.value = voicing.gain
+  g.connect(master)
+  const lpf = ac.createBiquadFilter()
+  lpf.type = 'lowpass'
+  lpf.frequency.value = voicing.lowpassHz
+  lpf.Q.value = ONE_SHOT_Q
+  lpf.connect(g)
   const src = ac.createBufferSource()
   src.buffer = buf
-  src.connect(master)
-  src.onended = () => src.disconnect()
-  src.start()
+  src.connect(lpf)
+  src.onended = () => {
+    src.disconnect()
+    lpf.disconnect()
+    g.disconnect()
+    const i = pendingOneShots.indexOf(src)
+    if (i >= 0) pendingOneShots.splice(i, 1)
+  }
+  src.start(at, Math.max(0, Math.min(offsetS, buf.duration)))
+  pendingOneShots.push(src)
+}
+
+/** 예약해 둔 원샷을 거둔다 — 스톨 연출이 끝나기 전에 다시 걸면 정지음이 시동음 위로 겹친다 */
+function cancelOneShots() {
+  for (const src of pendingOneShots.splice(0)) {
+    try {
+      src.stop()
+    } catch {
+      /* 이미 끝났다 */
+    }
+  }
 }
 
 /** 보이스 하나를 at에 멈추고, 끝나면 매달린 노드를 전부 떼어 낸다 */
@@ -573,15 +799,63 @@ function switchTo(index: number, rate: number, now: number) {
   })
 }
 
-/** 스로틀·부하가 정하는 톤을 지금 값으로 끌고 간다 (열 때 빠르게, 닫을 때 느리게) */
+/**
+ * 스로틀·부하가 정하는 톤을 지금 값으로 끌고 간다 (열 때 빠르게, 닫을 때 느리게).
+ * 부하는 loadSmooth(LOAD_TAU로 미리 흘려 둔 값)를 쓴다 — 클러치를 잡는 순간
+ * 톤 +3 dB와 셸프 +1.5 dB가 스로틀 시정수(30 ms)로 함께 무너지면 계단으로 들린다.
+ */
 function updateTone(now: number) {
-  const { lowpassHz, gain, q } = toneFor(level, loadLevel)
+  const { lowpassHz, gain, q } = toneFor(level, loadSmooth)
   const tau = throttleTau(level, lastLevel)
   lastLevel = level
   toneLPF?.frequency.setTargetAtTime(lowpassHz, now, tau)
   toneLPF?.Q.setTargetAtTime(q, now, TONE_TAU_CLOSE)
-  loadShelf?.gain.setTargetAtTime(LOAD_SHELF_DB * clamp01(loadLevel), now, TONE_TAU_CLOSE)
+  loadShelf?.gain.setTargetAtTime(LOAD_SHELF_DB * clamp01(loadSmooth), now, TONE_TAU_CLOSE)
   if (now >= blipUntil) toneGain?.gain.setTargetAtTime(gain, now, tau)
+}
+
+/** 리미터 연료 컷 한 번 — 40 ms 동안 −8 dB를 판다 */
+function scheduleLimiterCut(now: number) {
+  const g = limiterCut?.gain
+  if (!g) return
+  const low = dbToGain(LIMIT_CUT_DB)
+  g.cancelScheduledValues(now)
+  g.setValueAtTime(1, now)
+  g.linearRampToValueAtTime(low, now + LIMIT_CUT_ATTACK_S)
+  g.setValueAtTime(low, now + LIMIT_CUT_S)
+  g.linearRampToValueAtTime(1, now + LIMIT_CUT_S + LIMIT_CUT_RELEASE_S)
+}
+
+/**
+ * 러깅 스톨 — 죽어가는 엔진. 루프의 playbackRate를 0.4까지 끌어내리면서 머플러를 300 Hz로
+ * 닫는다. 이것 없이 loopBus만 내리면 "돌던 엔진이 그대로 사라지는" 키 끄기 소리가 된다.
+ */
+function stallSweep(now: number, fadeS: number) {
+  const tau = fadeS / 3
+  for (const slot of [active, outgoing]) {
+    if (!slot) continue
+    for (const v of slot.voices) {
+      const to = stallRate(v.src.playbackRate.value)
+      v.src.playbackRate.cancelScheduledValues(now)
+      v.src.playbackRate.setTargetAtTime(to, now, tau)
+      v.rateDepth?.gain.setTargetAtTime(to * RATE_LFO_DEPTH, now, tau)
+    }
+  }
+  toneLPF?.frequency.cancelScheduledValues(now)
+  toneLPF?.frequency.setTargetAtTime(STALL_LPF_HZ, now, tau)
+}
+
+/**
+ * 합성 층을 내린다. tick이 멈추면 mix 게인이 마지막 값에 얼어붙는데, loopBus가 0이라
+ * 들리지는 않아도 다음 시동 때까지 그대로 남는다 — 여기서 0으로 눕혀 둔다.
+ */
+function silenceLayers(now: number) {
+  high?.mix.gain.setTargetAtTime(0, now, LAYER_TAU)
+  intake?.level.gain.setTargetAtTime(0, now, LAYER_TAU)
+  if (burble) {
+    burble.active = false
+    burble.nextAt = 0
+  }
 }
 
 /** 합성 층 셋을 지금 상태로 끌고 간다 */
@@ -599,10 +873,20 @@ function tick() {
   // rpm 기울기는 tick 간격으로 재고 지수평활한다 — 한 tick의 잡음으로 버블이 깜빡이지 않게
   const dt = lastTickAt > 0 ? now - lastTickAt : TICK_MS / 1000
   lastTickAt = now
-  dRpm += (rpmSlope(lastRpm, rpmLevel, dt) - dRpm) * DRPM_SMOOTH
+  // 리미터 스터터는 **평활 전** 기울기로 본다. 연료 컷 바운스는 주기가 83 ms라 DRPM_SMOOTH
+  // (실효 시정수 71 ms)를 지나면 부호가 거의 지워진다 — 버블용 평활치로는 컷을 잡지 못한다.
+  const rawDRpm = rpmSlope(lastRpm, rpmLevel, dt)
+  dRpm += (rawDRpm - dRpm) * DRPM_SMOOTH
   lastRpm = rpmLevel
+  loadSmooth = smoothTo(loadSmooth, loadLevel, dt, LOAD_TAU)
+  if (limiterCutDue(rpmLevel, rawDRpm, now, lastCutAt)) {
+    scheduleLimiterCut(now)
+    lastCutAt = now
+  }
   updateTone(now)
-  updateLayers({ rpm: rpmLevel, throttle: level, load: loadLevel, dRpm }, now)
+  updateLayers({ rpm: rpmLevel, throttle: level, load: loadSmooth, dRpm }, now)
+  // 아이들 아래에서는 회전이 떨어진 만큼 루프도 작아진다 (합성 층은 제 게인이 따로 있다)
+  loopMix?.gain.setTargetAtTime(subIdleGain(rpmLevel), now, RATE_TAU)
   const loops = bank?.loops
   // 뱅크가 아직 없거나 시동이 꺼졌으면 루프를 모두 내린다. 디코드가 끝나면 다음 tick이 집어 든다
   if (!loops || loops.length === 0 || rpmLevel <= 0) {
@@ -639,20 +923,31 @@ export function start(): void {
   level = 0
   lastLevel = 0
   loadLevel = 0
+  loadSmooth = 0
   // 바깥에서 setRpm이 오기 전까지는 아이들로 돈다
   rpmLevel = IDLE_RPM
   lastRpm = IDLE_RPM
+  lastLiveRpm = 0
   lastTickAt = 0
   dRpm = 0
+  lastCutAt = 0
   blipUntil = 0
   if (!bank) warnOnce('cold', '뱅크가 아직 준비되지 않았다 — 디코드가 끝나면 소리가 붙는다')
-  playOneShot(bank?.start)
+  // 스톨 연출이 걸어 둔 것들을 되돌린다 — 예약된 정지음, 300 Hz로 닫힌 머플러, 파다 만 리미터 홈
+  cancelOneShots()
+  toneLPF?.frequency.cancelScheduledValues(now)
+  toneLPF?.frequency.setValueAtTime(toneFor(0, 0).lowpassHz, now)
+  limiterCut?.gain.cancelScheduledValues(now)
+  limiterCut?.gain.setValueAtTime(1, now)
+  // 녹음의 점화를 물리의 점화(CRANK_S)에 맞춘다 — 둘이 어긋나면 바늘과 소리가 따로 논다
+  const crank = crankPlan(bank?.start?.duration ?? 0, CRANK_S)
+  playOneShot(bank?.start, oneShotVoicing('crank', 0, 0), crank.offsetS)
   // 정지 페이드가 아직 돌고 있을 수 있다. 현재 값을 붙잡고 20 ms에 걸쳐 0으로 내린 뒤 예약을 건다 —
   // 곧바로 0을 찍으면 딸깍한다. 꺼져 있던 상태면 0 → 0이라 아무 일도 일어나지 않는다.
   holdLoopBus(now)
   loopBus.gain.linearRampToValueAtTime(0, now + BUS_DROP_S)
-  loopBus.gain.setValueAtTime(0, now + START_DELAY_S)
-  loopBus.gain.linearRampToValueAtTime(1, now + START_DELAY_S + START_FADE_S)
+  loopBus.gain.setValueAtTime(0, now + crank.delayS)
+  loopBus.gain.linearRampToValueAtTime(1, now + crank.delayS + START_FADE_S)
   tick()
   timer = setInterval(tick, TICK_MS)
 }
@@ -660,6 +955,9 @@ export function start(): void {
 /** 회전수. 0 이하(시동 꺼짐·스톨)면 루프를 내린다 — playbackRate는 0이 될 수 없다 */
 export function setRpm(rpm: number): void {
   rpmLevel = safeRpm(rpm)
+  // 스톨은 "바로 앞 프레임까지 돌고 있었는데 지금 0"이다. RideControls가 setRpm(0) 바로 뒤에
+  // stop()을 부르므로, 이 값이 stop()에서 죽은 엔진과 키 끄기를 가르는 유일한 단서다.
+  if (rpmLevel > 0) lastLiveRpm = rpmLevel
 }
 
 /** 스로틀 0~1. 머플러가 열리고 톤 게인이 오르고 흡기 그로울이 붙는다 */
@@ -675,7 +973,9 @@ export function setLoad(l: number): void {
 /** 변속 순간의 "쉭" — 톤 게인을 +4 dB 들었다 놓는다 */
 export function blip(): void {
   const ac = ctx
-  if (!ac || !toneGain) return
+  // 돌고 있지 않으면 아무것도 하지 않는다. 죽은 엔진은 울지 않고(RideControls도 그렇게 막는다),
+  // 스톨 페이드 도중의 블립이 죽어가는 연출을 +4 dB로 들어 올리지도 않는다.
+  if (!ac || !toneGain || timer === null) return
   const now = ac.currentTime
   const base = toneFor(level, loadLevel).gain
   const peak = base * dbToGain(BLIP_DB)
@@ -693,14 +993,21 @@ export function blip(): void {
  * 돌고 있을 때만 그렇게 한다 — 두 번째 stop()은 조용한 no-op이다(stopPlan 참조).
  */
 export function stop(): void {
+  // 스톨 판정이 먼저다 — 아래에서 rpmLevel을 0으로 밀기 전에 봐야 한다.
+  const stall = timer !== null && rpmLevel <= 0 && lastLiveRpm > 0
+  const throttleAtStop = level
+  const loadAtStop = loadSmooth
   level = 0
   lastLevel = 0
   rpmLevel = 0
   loadLevel = 0
+  loadSmooth = 0
   dRpm = 0
   lastRpm = 0
+  lastLiveRpm = 0
   lastTickAt = 0
-  const plan = stopPlan(timer !== null, bank?.stop?.duration ?? 0)
+  lastCutAt = 0
+  const plan = stopPlan(timer !== null, bank?.stop?.duration ?? 0, stall)
   if (timer !== null) {
     clearInterval(timer)
     timer = null
@@ -710,9 +1017,14 @@ export function stop(): void {
   const now = ac.currentTime
   blipUntil = 0
   holdLoopBus(now)
-  loopBus.gain.linearRampToValueAtTime(0.0001, now + STOP_FADE_S)
-  releaseLoops(now + STOP_FADE_S)
-  if (plan.oneShot) playOneShot(bank?.stop)
+  // 스톨이면 회전이 죽어 내려가는 것을 들려준 뒤에 내린다. 키 끄기는 그냥 내린다.
+  if (plan.stall) stallSweep(now, plan.fadeS)
+  loopBus.gain.linearRampToValueAtTime(0.0001, now + plan.fadeS)
+  releaseLoops(now + plan.fadeS)
+  silenceLayers(now)
+  if (plan.oneShot) {
+    playOneShot(bank?.stop, oneShotVoicing(plan.stall ? 'stall' : 'keyOff', throttleAtStop, loadAtStop))
+  }
   if (suspendTimer !== null) clearTimeout(suspendTimer)
   suspendTimer = setTimeout(() => {
     suspendTimer = null

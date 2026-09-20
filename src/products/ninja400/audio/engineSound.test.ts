@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest'
 import {
   COMPRESSOR,
   blip,
+  crankPlan,
   fadeCurve,
+  limiterCutDue,
   loopChainDb,
   fadeSeconds,
+  oneShotVoicing,
   peakDbfs,
   preload,
   rmsDbfs,
@@ -12,9 +15,12 @@ import {
   setLoad,
   setRpm,
   setThrottle,
+  smoothTo,
+  stallRate,
   start,
   stop,
   stopPlan,
+  subIdleGain,
   throttleTau,
   toneFor,
   voiceOffsets,
@@ -200,9 +206,12 @@ describe('stop()의 멱등성', () => {
   it('돌고 있지 않으면 페이드도 원샷도 suspend 예약도 없다', () => {
     // 스톨 때 RideControls가 한 번, running에서 빠져나갈 때 Finale이 또 한 번 부른다.
     // 두 번째 호출이 stop.ogg를 다시 울리면 정지음이 두 번 난다.
-    expect(stopPlan(false, 1.2)).toEqual({ fade: false, oneShot: false, suspendAfterS: 0 })
+    const none = { fade: false, oneShot: false, stall: false, fadeS: 0, oneShotDelayS: 0, suspendAfterS: 0 }
+    expect(stopPlan(false, 1.2)).toEqual(none)
     // 시동 전(preload가 컨텍스트만 만들어 둔 상태)에 부르는 stop()도 같은 자리에 걸린다
-    expect(stopPlan(false, 0)).toEqual({ fade: false, oneShot: false, suspendAfterS: 0 })
+    expect(stopPlan(false, 0)).toEqual(none)
+    // 스톨이라고 알려 줘도 돌고 있지 않으면 아무것도 하지 않는다
+    expect(stopPlan(false, 1.2, true)).toEqual(none)
   })
   it('돌고 있으면 페이드·원샷을 걸고 stop.ogg가 끝날 때까지 기다렸다 재운다', () => {
     const p = stopPlan(true, 1.2)
@@ -230,5 +239,168 @@ describe('오디오가 없는 환경', () => {
     const first = preload()
     expect(preload()).toBe(first)
     await expect(first).resolves.toBeUndefined()
+  })
+})
+
+describe('원샷 레벨 — 사용자 신고: "스톨하면 소리가 갑자기 커진다"', () => {
+  // 실제 ogg를 렌더해 잰 값 (200 ms 단기 RMS, destination 기준):
+  //   아이들 루프(LFO 꼭대기) 평탄 −32.5 dBFS · A가중 −49.3 dBFS
+  //   stop.ogg를 master로 직결 평탄 −29.2 · A가중 −32.9  →  +3.2 dB / +16.4 dB(A)
+  // 원샷이 톤 게인(−5 dB)과 1100 Hz 저역통과를 건너뛴 탓이다.
+  const db = (g: number) => 20 * Math.log10(g)
+
+  it('크랭크·키 끄기 원샷은 지금 톤 게인을 그대로 따라간다 — master 직결(0 dB)이 아니라', () => {
+    expect(db(oneShotVoicing('crank', 0, 0).gain)).toBeCloseTo(-5, 6)
+    expect(db(oneShotVoicing('keyOff', 0, 0).gain)).toBeCloseTo(-5, 6)
+    // 스로틀을 연 채 끄면 루프도 원샷도 같이 커진다 — 둘 사이의 층계는 생기지 않는다
+    expect(db(oneShotVoicing('keyOff', 1, 0).gain)).toBeCloseTo(0, 6)
+    expect(db(oneShotVoicing('keyOff', 1, 1).gain)).toBeCloseTo(3, 6)
+    expect(oneShotVoicing('crank', 0, 0).delayS).toBe(0)
+  })
+
+  it('스톨 원샷은 아이들 톤보다 10 dB 낮고 머플러와 같은 자리(1100 Hz)까지 닫힌다', () => {
+    const v = oneShotVoicing('stall', 0, 0)
+    expect(db(v.gain)).toBeCloseTo(-15, 6)
+    expect(v.lowpassHz).toBe(1100)
+    // 죽어가는 연출이 끝난 뒤에 온다
+    expect(v.delayS).toBeCloseTo(0.25, 10)
+  })
+
+  it('스톨 원샷은 스로틀·부하가 남아 있어도 올라가지 않는다 — 죽은 엔진에는 부하가 없다', () => {
+    expect(oneShotVoicing('stall', 1, 1)).toEqual(oneShotVoicing('stall', 0, 0))
+  })
+
+  it('스톨이 아이들보다 **작다** — 이 부등호가 신고된 버그 그 자체다', () => {
+    const idleTone = db(toneFor(0, 0).gain)
+    expect(db(oneShotVoicing('stall', 0, 0).gain)).toBeLessThan(idleTone)
+    // 고치기 전에는 원샷이 master 직결(0 dB)이라 아이들 톤보다 5 dB 위였다
+    expect(0).toBeGreaterThan(idleTone)
+  })
+
+  it('원샷 저역통과는 톤(1100 Hz)보다 열려 있다 — 크랭킹은 배기음이 아니다', () => {
+    expect(oneShotVoicing('crank', 0, 0).lowpassHz).toBeGreaterThan(toneFor(0, 0).lowpassHz)
+    expect(oneShotVoicing('crank', 0, 0).lowpassHz).toBe(2200)
+  })
+})
+
+describe('스톨 연출', () => {
+  it('stopPlan은 스톨에 0.25초를 주고 원샷을 그 뒤로 미룬다', () => {
+    const p = stopPlan(true, 1.2, true)
+    expect(p.stall).toBe(true)
+    expect(p.fadeS).toBeCloseTo(0.25, 10)
+    expect(p.oneShotDelayS).toBeCloseTo(0.25, 10)
+    // 0.25(연출) + 1.2(stop.ogg) + 0.05(여유) — 원샷이 잘리기 전에 재우지 않는다
+    expect(p.suspendAfterS).toBeCloseTo(1.5, 10)
+  })
+
+  it('키 끄기는 예전 그대로 0.15초에 곧바로 운다', () => {
+    const p = stopPlan(true, 1.2, false)
+    expect(p.stall).toBe(false)
+    expect(p.fadeS).toBeCloseTo(0.15, 10)
+    expect(p.oneShotDelayS).toBe(0)
+    expect(p.suspendAfterS).toBeCloseTo(1.25, 10)
+  })
+
+  it('playbackRate는 0.4까지만 내려간다 — 0으로 가면 루프가 멎어 무음이 된다', () => {
+    expect(stallRate(1)).toBeCloseTo(0.4, 10)
+    expect(stallRate(0.75)).toBeCloseTo(0.4, 10)
+    // 이미 더 느리면 끌어올리지 않는다
+    expect(stallRate(0.3)).toBeCloseTo(0.3, 10)
+    expect(stallRate(0)).toBeCloseTo(0.4, 10)
+    expect(stallRate(NaN)).toBeCloseTo(0.4, 10)
+  })
+})
+
+describe('아이들 아래 루프 배율', () => {
+  it('아이들 위는 1, 600 rpm 아래는 0', () => {
+    expect(subIdleGain(1300)).toBe(1)
+    expect(subIdleGain(9000)).toBe(1)
+    expect(subIdleGain(600)).toBe(0)
+    expect(subIdleGain(0)).toBe(0)
+    expect(subIdleGain(NaN)).toBe(0)
+  })
+  it('죽어가는 회전을 따라 내려간다 — 900 rpm에서 −7.4 dB', () => {
+    expect(20 * Math.log10(subIdleGain(900))).toBeCloseTo(-7.4, 1)
+    expect(subIdleGain(950)).toBeGreaterThan(subIdleGain(900))
+  })
+  it('스타터가 돌리는 300 rpm에서는 0 — 늘어진 테이프가 새어 나오지 않는다', () => {
+    expect(subIdleGain(300)).toBe(0)
+    expect(subIdleGain(599)).toBe(0)
+  })
+})
+
+describe('리미터 스터터', () => {
+  it('11,900 위에서 회전이 꺾일 때만 판다', () => {
+    expect(limiterCutDue(11950, -5000, 10, 0)).toBe(true)
+    // 올라가며 리미터를 치는 순간에는 아직 연료가 붙어 있다
+    expect(limiterCutDue(11950, 5000, 10, 0)).toBe(false)
+    // 리미터 아래에서 회전이 떨어지는 것은 그냥 감속이다 (버블이 맡는다)
+    expect(limiterCutDue(9000, -5000, 10, 0)).toBe(false)
+    expect(limiterCutDue(11900, -5000, 10, 0)).toBe(false)
+  })
+  it('초당 12번을 넘지 않는다', () => {
+    expect(limiterCutDue(11950, -5000, 10, 9.99)).toBe(false)
+    expect(limiterCutDue(11950, -5000, 10, 10 - 1 / 12)).toBe(true)
+    expect(limiterCutDue(11950, -5000, 10, 9.9)).toBe(true)
+  })
+  it('성치 않은 값에는 걸리지 않는다', () => {
+    expect(limiterCutDue(NaN, -5000, 10, 0)).toBe(false)
+    expect(limiterCutDue(11950, NaN, 10, 0)).toBe(false)
+    expect(limiterCutDue(11950, -5000, NaN, 0)).toBe(false)
+  })
+})
+
+describe('부하 평활', () => {
+  it('클러치를 잡는 순간의 4.5 dB가 계단이 되지 않는다 — 0.15초 시정수', () => {
+    // 25 ms tick 하나에 15%만 움직인다 (1 − e^(−0.025/0.15))
+    expect(smoothTo(1, 0, 0.025, 0.15)).toBeCloseTo(Math.exp(-0.025 / 0.15), 10)
+    // 3τ면 95%
+    expect(smoothTo(1, 0, 0.45, 0.15)).toBeLessThan(0.05)
+  })
+  it('dt·tau가 성치 않으면 목표에 바로 붙는다 (첫 tick·복귀 직후)', () => {
+    expect(smoothTo(1, 0, 0, 0.15)).toBe(0)
+    expect(smoothTo(1, 0, NaN, 0.15)).toBe(0)
+    expect(smoothTo(NaN, 0.5, 0.025, 0.15)).toBe(0.5)
+    expect(smoothTo(0.5, NaN, 0.025, 0.15)).toBe(0.5)
+  })
+})
+
+describe('크랭크 정렬', () => {
+  // start.ogg는 1.012초, 그 안의 점화는 0.8초 지점이다.
+  // 물리(rideModel.CRANK_S)는 0.6초 동안 300 rpm으로 돌리다 그때 연소를 붙인다.
+  it('녹음의 점화가 물리의 점화에 앉는다 — 루프는 그 순간 올라온다', () => {
+    const p = crankPlan(1.012, 0.6)
+    expect(p.offsetS).toBeCloseTo(0.2, 10)   // 앞 0.2초(크랭킹만 있는 대목)를 버린다
+    expect(p.delayS).toBeCloseTo(0.6, 10)    // = 물리의 점화 시각
+    // 잘라 낸 만큼과 기다리는 만큼을 더하면 늘 녹음의 점화 지점이다
+    expect(p.offsetS + p.delayS).toBeCloseTo(0.8, 10)
+  })
+  it('물리 크랭킹이 길어지면 녹음을 앞에서부터 다 쓴다 (범프 스타트로 짧아지면 그만큼 잘린다)', () => {
+    expect(crankPlan(1.012, 0.8)).toEqual({ offsetS: 0, delayS: 0.8 })
+    expect(crankPlan(1.012, 2)).toEqual({ offsetS: 0, delayS: 0.8 })
+    const short = crankPlan(1.012, 0.15)
+    expect(short.offsetS).toBeCloseTo(0.65, 10)
+    expect(short.delayS).toBeCloseTo(0.15, 10)
+  })
+  it('버퍼가 없거나 값이 성치 않아도 늘 유효한 지연을 돌려준다', () => {
+    expect(crankPlan(0, 0.6)).toEqual({ offsetS: 0, delayS: 0.8 })
+    expect(crankPlan(NaN, 0.6)).toEqual({ offsetS: 0, delayS: 0.8 })
+    expect(crankPlan(1.012, NaN)).toEqual({ offsetS: 0, delayS: 0.8 })
+    // 버퍼보다 많이 잘라 내지 않는다
+    expect(crankPlan(0.1, 0.1).offsetS).toBeLessThanOrEqual(0.1)
+  })
+})
+
+describe('칸 교차 페이드의 헤드룸', () => {
+  // 교차 페이드 중에는 칸 둘이 같은 rpm으로 동시에 운다. 제곱합은 1이지만(등파워),
+  // 두 녹음의 기본파 위상은 무작위라 운 좋게(나쁘게) 맞으면 선형으로 더해진다.
+  it('가장 나쁜 경우가 +3.01 dB — MASTER_GAIN 표가 세지 않은 몫이다', () => {
+    const c = fadeCurve(1, true)
+    const d = fadeCurve(1, false)
+    let worst = 0
+    for (let i = 0; i < c.length; i++) worst = Math.max(worst, c[i] + d[i])
+    expect(20 * Math.log10(worst)).toBeCloseTo(3.01, 2)
+    // 피크 −2.9 dBFS + 3.01 = +0.1 dBFS. 컴프레서(−10 dB/4:1)가 이 과도부를 받으라고 있다
+    expect(peakDbfs(9000, 1, 1) + 20 * Math.log10(worst)).toBeLessThan(1)
   })
 })

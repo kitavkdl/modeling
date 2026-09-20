@@ -322,3 +322,17 @@ describe('앤티에일리어싱과 rpm 기울기', () => {
     expect(dbOf(dbToGain(-12))).toBeCloseTo(-12, 10)
   })
 })
+
+describe('리미터 바운스에서는 버블이 울지 않는다', () => {
+  // 물리의 소프트 컷은 11,700~12,000을 오간다 — 떨어지는 쪽 기울기가 −6,000 rpm/s를 넘어
+  // rpm·dRpm 조건만 보면 버블 조건에 그대로 걸린다. 막는 것은 스로틀뿐이다.
+  it('전개로 리미터를 치는 동안은 스로틀이 막는다', () => {
+    expect(burbleRate(1, 12000, -6000)).toBe(0)
+    expect(burbleRate(1, 12000, -6000, true)).toBe(0)
+    expect(burbleRate(0.5, 11800, -3000, true)).toBe(0)
+  })
+  it('같은 회전이라도 스로틀을 닫으면 그때는 진짜 감속이라 운다', () => {
+    expect(burbleRate(0, 12000, -6000)).toBeGreaterThan(0)
+    expect(burbleRate(0.09, 12000, -6000)).toBeGreaterThan(0)
+  })
+})
