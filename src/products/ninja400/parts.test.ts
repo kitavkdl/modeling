@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { describe, expect, it } from 'vitest'
-import type { CompositeChild } from '../../engine/types'
+import type { CompositeChild, Vec3 } from '../../engine/types'
 import { validateGeometry } from '../../engine/types'
 import { PARTS, PART_BY_ID, PROPS, STATIONS } from './parts'
 import { NINJA_MATERIALS } from './materials'
@@ -180,6 +180,55 @@ describe('ninja400 parts', () => {
       const inside = x >= -330 - radius && x <= 90 + radius && y >= 280 - radius && y <= 550 + radius && Math.abs(z) <= 190 + radius
       expect(inside, `hose (${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)})`).toBe(false)
     }
+  })
+  it('배기 관이 지그 기둥을 통과하지 않는다', () => {
+    // 지그 기둥은 소품이라 mount가 없다 — 박스를 관 반지름만큼 부풀려 중심선 샘플을 검사한다.
+    const boxes = PROPS.map((pr) => {
+      if (pr.geometry.type !== 'box') throw new Error('지그 기둥은 box여야 한다')
+      const [w, h, d] = pr.geometry.size
+      const [px, py, pz] = pr.position
+      return { min: [px - w / 2, py, pz - d / 2] as Vec3, max: [px + w / 2, py + h, pz + d / 2] as Vec3, at: px }
+    })
+    for (const { point: [x, y, z], radius } of partTubeSamples([PART_BY_ID.exhaust_header, PART_BY_ID.exhaust_collector], 400)) {
+      for (const b of boxes) {
+        const inside =
+          x > b.min[0] - radius && x < b.max[0] + radius &&
+          y > b.min[1] - radius && y < b.max[1] + radius &&
+          z > b.min[2] - radius && z < b.max[2] + radius
+        expect(inside, `배기 (${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)}) r${radius} 가 기둥 x=${b.at} 안`).toBe(false)
+      }
+    }
+  })
+  it('리어 쇼크가 리어 허거를 뚫지 않는다', async () => {
+    const { REAR_AXLE, REAR_TIRE_R } = await import('./spec')
+    // 허거 앞쪽 스윕을 줄여 쇼크 로드(끝 x -570, y 653)가 지나는 자리를 비웠다.
+    const shock = instanceBounds(PART_BY_ID.rear_shock.instances[0])
+    const hugger = instanceBounds(PART_BY_ID.rear_hugger.instances[0])
+    const overlaps = (i: number) => shock.min[i] < hugger.max[i] && shock.max[i] > hugger.min[i]
+    expect([0, 1, 2].every(overlaps), `shock ${JSON.stringify(shock)} hugger ${JSON.stringify(hugger)}`).toBe(false)
+    // 허거는 여전히 타이어를 덮는다
+    expect(hugger.max[1] - REAR_AXLE[1]).toBeGreaterThan(REAR_TIRE_R + 15)
+  })
+  it('대기 위치의 부품이 바닥에 묻히거나 조립된 차체와 겹치지 않는다', () => {
+    const asm = assemblyBounds(PARTS)
+    for (const p of PARTS) {
+      if (p.hidden || p.preplaced) continue
+      for (const inst of p.instances) {
+        const b = instanceBounds({ ...inst, mountPosition: p.restPosition })
+        expect(b.min[1], `${inst.id} 대기 bbox가 바닥 아래`).toBeGreaterThanOrEqual(0)
+        const hits = [0, 1, 2].every((i) => b.min[i] < asm.max[i] && b.max[i] > asm.min[i])
+        expect(hits, `${inst.id} 대기 bbox가 조립 차체와 겹친다`).toBe(false)
+      }
+    }
+  })
+  it('탱크가 캠 커버보다 넓고 캠 커버는 실린더 헤드보다 좁다', () => {
+    const tank = instanceBounds(PART_BY_ID.fuel_tank.instances[0])
+    const cam = instanceBounds(PART_BY_ID.cam_cover.instances[0])
+    const head = instanceBounds(PART_BY_ID.cylinder_head.instances[0])
+    expect(cam.max[2]).toBeLessThan(head.max[2])
+    expect(tank.max[2]).toBeGreaterThanOrEqual(cam.max[2])
+    // 탱크 뒤쪽 밑면은 엔진 윗면(캠 커버 뒤끝 y 789)보다 위라 그 자리에서는 아예 겹치지 않는다
+    expect(tank.min[1]).toBeLessThanOrEqual(760)
   })
   it('라디에이터가 프레임 튜브 안쪽에 들어간다', () => {
     // Task 8에서 대각 브레이스([120,780,175]→[225,640,152]→[330,500,128])가 라디에이터를 스쳤다.

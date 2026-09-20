@@ -107,20 +107,20 @@ export const STATIONS: StationDef[] = [
 ]
 
 /** 프레임 지그: 프레임 최하단 노드 두 곳을 받치는 기둥 2개.
- *  앞 기둥은 엔진 앞 하단 마운트(200, 300, ±130), 뒤 기둥은 스윙암 피벗(-420, 420, ±150) 아래다.
+ *  앞 기둥은 엔진 앞 하단 마운트(200, 300, ±138), 뒤 기둥은 스윙암 피벗(-420, 420, ±100) 아래다.
  *  기둥 윗면 = position.y + size.y 가 그 노드 높이와 정확히 같다.
- *  x는 배기 경로를 피해 노드에서 비켜 세운다. 노드 z폭(±130 / ±150)을 덮어야 해서 z는 줄일 수 없고,
- *  기둥 x폭 80이 노드 x를 여전히 품는 범위 안에서 옮겼다.
- *  앞 기둥 x 190..270 — 배기 집합부(x ≤ 180)보다 앞. 뒤 기둥 x -440..-360 — 머플러(x ≤ -450)보다 앞. */
+ *  배기가 기둥을 관통하지 않도록 앞 기둥은 x로, 뒤 기둥은 z로 비켰다 (parts.test.ts가 지킨다):
+ *  - 앞 기둥 x 210..290 — 집합부 첫 점(180, r27 → x ≤ 207)보다 뒤. 가로대 튜브(x 188..212)를 여전히 문다.
+ *  - 뒤 기둥 z ±120 — 집합부가 그 x 구간에서 z 163~183(r27 → z ≥ 136)으로 바깥을 돌아 나간다. */
 export const PROPS: NonNullable<ProductDef['props']> = [
-  { geometry: { type: 'box', size: [80, 300, 300] }, position: [230, 0, 0], material: 'bench' },
-  { geometry: { type: 'box', size: [80, 420, 340] }, position: [-400, 0, 0], material: 'bench' },
+  { geometry: { type: 'box', size: [80, 300, 300] }, position: [250, 0, 0], material: 'bench' },
+  { geometry: { type: 'box', size: [80, 420, 240] }, position: [-400, 0, 0], material: 'bench' },
 ]
 
 // 대기 위치 · 카메라 기본값 -------------------------------------------------------
 // 대기 높이는 지면 위다. 부품 원점이 형상 한가운데인 경우가 많아 y=0이면 바닥에 파묻힌다.
 const REST: Record<string, Vec3> = {
-  main: [-300, 200, -1000], // 차체 뒤쪽 (큰 부품)
+  main: [-300, 240, -1000], // 차체 뒤쪽 (큰 부품). 사이드 카울 밑단이 원점 아래 -20이라 240까지 띄운다
   small: [0, 200, 1500], // 카메라 쪽 (볼트·밸브·지시등)
   engine: [420, 300, 1100], // 엔진 스탠드 옆
   front_wheel: [1585, 320, 1000], // 휠 원점이 액슬 중심이라 타이어 반지름(293)보다 높다
@@ -197,7 +197,8 @@ add({
   geometry: subframeRails(SUB_BASE),
   mount: SUB_BASE,
   material: 'frame_paint',
-  rest: REST.main,
+  // 레일이 원점 아래 -306까지 내려간다 — 대기 위치에서 바닥에 묻히지 않도록 그만큼 올린다
+  rest: [REST.main[0], 320, REST.main[2]],
 })
 
 // --- B. 엔진 작업대 (Task B3) --------------------------------------------------
@@ -273,7 +274,8 @@ add({ id: 'front_disc', ko: '앞 브레이크 디스크', en: 'Front Brake Disc'
 add({ id: 'front_axle', ko: '앞 액슬', en: 'Front Axle', geometry: { type: 'composite', children: [{ geometry: cylZ(9, 240) }, { geometry: cylZ(16, 10), position: [0, 0, 120] }] }, mount: FRONT_AXLE, material: 'steel', marries: FW, requires: ['front_disc', 'fork'], small: true, hint: '앞 액슬 체결', camera: { azimuth: 40, polar: 62, distance: 2400, target: [685, 400, 0] } })
 add({ id: 'front_caliper', ko: '프런트 캘리퍼', en: 'Front Brake Caliper', geometry: { type: 'box', size: [90, 60, 40] }, mount: [FRONT_AXLE[0] + 40, FRONT_AXLE[1] + 120, -78], material: 'cast_alu', small: true })
 // 펜더 원점은 액슬 위 300mm — fenderArch는 휠 중심 기준 호를 그리고 그만큼 빼서 넘긴다.
-add({ id: 'front_fender', ko: '프런트 펜더', en: 'Front Fender', geometry: fenderArch(FRONT_TIRE_R + 28, 138, [-48, 52], [0, 300, 0]), mount: [FRONT_AXLE[0], FRONT_AXLE[1] + 300, 0], material: 'primer', paintable: true })
+// 안쪽 반지름 313 = 타이어(293) + 20. 폭 132(반폭 66)라 포크 다리 안쪽면(|z| = 100 - 27 = 73)에 닿지 않는다.
+add({ id: 'front_fender', ko: '프런트 펜더', en: 'Front Fender', geometry: fenderArch(FRONT_TIRE_R + 20, 132, [-55, 60], [0, 300, 0]), mount: [FRONT_AXLE[0], FRONT_AXLE[1] + 300, 0], material: 'primer', paintable: true })
 add({ id: 'rear_wheel', ko: '뒤 휠 · 타이어', en: 'Rear Wheel', geometry: spokedWheel(REAR_TIRE_R, REAR_TIRE_W, RIM_R), mount: REAR_AXLE, material: 'polished_alu', station: RW })
 add({ id: 'rear_disc', ko: '리어 브레이크 디스크', en: 'Rear Brake Disc', geometry: brakeDisc(110, 5), mount: [REAR_AXLE[0], REAR_AXLE[1], 80], material: 'stainless', station: RW })
 add({ id: 'rear_sprocket', ko: '리어 스프로킷', en: 'Rear Sprocket', geometry: toothedDisc(118, 41, 7, 24, 10), mount: [REAR_AXLE[0], REAR_AXLE[1], -200], material: 'steel', station: RW })
@@ -287,7 +289,7 @@ add({ id: 'chain', ko: '체인', en: 'Drive Chain', geometry: { type: 'composite
 // --- G~K. 냉각·전장·흡기·배기·조작계 (Task B5) --------------------------------
 // 라디에이터는 프레임 대각 브레이스([120,780,175]→[225,640,152]→[330,500,128])가 스치던 자리라
 // 앞·아래로 옮기고 폭을 260(±130)으로 줄여 브레이스 안쪽으로 넣었다. parts.test.ts가 지킨다.
-add({ id: 'radiator', ko: '라디에이터', en: 'Radiator', geometry: radiatorCore(280, 250, 34), mount: [240, 385, 0], material: 'cast_alu', requires: ['chain'], camera: { azimuth: 60, polar: 62, distance: 2600, target: [250, 500, 0] } })
+add({ id: 'radiator', ko: '라디에이터', en: 'Radiator', geometry: radiatorCore(280, 250, 34), mount: [240, 385, 0], material: 'cast_alu', requires: ['chain'], camera: { azimuth: 60, polar: 62, distance: 2400, target: [240, 520, 0] } })
 add({ id: 'cooling_fan', ko: '냉각 팬', en: 'Cooling Fan', geometry: coolingFan(), mount: [204, 520, 20], rot: [0, Math.PI / 2, 0], material: 'plastic_black', small: true })
 // 위 호스는 라디에이터 윗탱크 → 헤드 오른쪽, 아래 호스는 아랫탱크 → 워터펌프(왼쪽) 방향.
 // 둘 다 크랭크케이스(x -330..90, y 280..550, |z|<=190)를 파고들지 않는 경로다.
@@ -311,30 +313,32 @@ const CLUSTER_KEY_LOCAL: Vec3 = (() => {
   return [dx * c + dy * s, dy * c - dx * s, KEY_MOUNT[2]]
 })()
 add({ id: 'instrument_cluster', ko: '계기판', en: 'Instrument Cluster', geometry: clusterGeometry(CLUSTER_KEY_LOCAL, -CLUSTER_TILT),
-  mount: CLUSTER_MOUNT, rot: [0, 0, CLUSTER_TILT], material: 'plastic_black', small: true, camera: { azimuth: 10, polar: 50, distance: 2200, target: [500, 950, 0] } })
+  mount: CLUSTER_MOUNT, rot: [0, 0, CLUSTER_TILT], material: 'plastic_black', small: true, camera: { azimuth: -50, polar: 40, distance: 1800, target: [510, 960, 10] } })
 // 어퍼 카울 앞 단면(x=640, 폭 240)을 렌즈 두 짝이 채운다 — x 610..640, |z| <= 136.
 add({ id: 'headlight', ko: '헤드라이트 유닛', en: 'Headlight Unit', geometry: headlightUnit(), mount: [610, 888, 0], material: 'lamp_off', small: true, camera: { azimuth: 0, polar: 60, distance: 2400, target: [600, 900, 0] } })
-add({ id: 'taillight', ko: '테일라이트', en: 'Tail Light', geometry: tailLightLens(), mount: [-896, 858, 0], material: 'lamp_off', small: true, camera: { azimuth: 180, polar: 60, distance: 2400, target: [-820, 850, 0] } })
-// 앞은 어퍼 카울 옆면(x=480에서 표면 z≈168), 뒤는 테일 카울 옆면(x=-846에서 z≈64)에 붙는다.
+add({ id: 'taillight', ko: '테일라이트', en: 'Tail Light', geometry: tailLightLens(), mount: [-896, 826, 0], material: 'lamp_off', small: true, camera: { azimuth: -110, polar: 58, distance: 2000, target: [-850, 810, 0] } })
+// 앞은 어퍼 카울 옆면(x=480에서 표면 z≈168), 뒤는 테일 카울 옆면(x=-846, y=826에서 z≈79)에 붙는다.
 add({ id: 'turn_signal', ko: '방향지시등', en: 'Turn Signal', geometry: turnSignal(), mount: [0, 0, 0], material: 'lamp_off', small: true,
-  instances: [{ suffix: 'fl', mount: [480, 828, -182], rot: [0, Math.PI, 0] }, { suffix: 'fr', mount: [480, 828, 182] }, { suffix: 'rl', mount: [-846, 820, -64], rot: [0, Math.PI, 0] }, { suffix: 'rr', mount: [-846, 820, 64] }] })
+  instances: [{ suffix: 'fl', mount: [480, 828, -182], rot: [0, Math.PI, 0] }, { suffix: 'fr', mount: [480, 828, 182] }, { suffix: 'rl', mount: [-846, 826, -84], rot: [0, Math.PI, 0] }, { suffix: 'rr', mount: [-846, 826, 84] }] })
 // 에어박스는 탱크 밑면(y=760)과 시트 팬 아래, 메인 스파(|z| >= 152) 안쪽에 들어간다.
 add({ id: 'airbox', ko: '에어박스', en: 'Airbox', geometry: { type: 'roundedBox', size: [230, 100, 160], radius: 20 }, mount: [-165, 655, 0], material: 'plastic_black', camera: { azimuth: 30, polar: 50, distance: 2800, target: [-100, 800, 0] } })
 // 보어 피치가 84라 스로틀 바디 두 짝은 |z| <= 60에 든다. 탱크 껍데기(x=-49에서 반폭 78)
 // 안쪽으로 들어가도록 폭을 줄였다.
 add({ id: 'throttle_body', ko: '스로틀 바디', en: 'Throttle Body', geometry: { type: 'composite', children: [{ geometry: cylZ(28, 130) }, { geometry: { type: 'box', size: [60, 40, 120] }, position: [0, 30, 0] }] }, mount: tilt(-70, 400, 0), rot: TILT_ROT, material: 'cast_alu', small: true })
-add({ id: 'fuel_tank', ko: '연료탱크', en: 'Fuel Tank', geometry: tankGeometry(), mount: TANK_BASE, material: 'primer', paintable: true, camera: { azimuth: 30, polar: 55, distance: 3000, target: [50, 900, 0] } })
+add({ id: 'fuel_tank', ko: '연료탱크', en: 'Fuel Tank', geometry: tankGeometry(), mount: TANK_BASE, material: 'primer', paintable: true, camera: { azimuth: 35, polar: 52, distance: 2800, target: [90, 870, 0] } })
 // 좌우 헤더가 서로 다른 경로를 타서 인스턴스마다 geometry를 따로 준다. 경로는 월드 좌표라
 // 회전은 필요 없다(rot [0,0,0]). 왼쪽 헤더가 엔진 밑에서 오른쪽으로 건너와 집합부에서 만난다.
 add({ id: 'exhaust_header', ko: '배기 헤더', en: 'Exhaust Header', geometry: exhaustHeader(1),
   mount: exhaustHeaderPath(1)[0], material: 'stainless', small: true,
+  // 헤더 원점이 배기 포트(맨 위)라 관이 원점 아래 -440까지 내려간다. 대기 위치를 그만큼 올린다.
+  rest: [REST.small[0], 480, REST.small[2]],
   instances: [
     { suffix: 'l', mount: exhaustHeaderPath(-1)[0], geometry: exhaustHeader(-1) },
     { suffix: 'r', mount: exhaustHeaderPath(1)[0], geometry: exhaustHeader(1) },
   ],
-  camera: { azimuth: 70, polar: 65, distance: 2800, target: [100, 350, 0] } })
+  camera: { azimuth: 70, polar: 65, distance: 2400, target: [130, 420, 0] } })
 add({ id: 'exhaust_collector', ko: '배기 집합부', en: 'Exhaust Collector', geometry: exhaustCollector(), mount: EXHAUST_COLLECTOR_PATH[0], material: 'stainless' })
-add({ id: 'muffler', ko: '머플러', en: 'Muffler', geometry: mufflerGeometry(), mount: [-450, 240, 190], rot: [0, 0, Math.PI / 2 - 0.18], material: 'stainless', camera: { azimuth: 90, polar: 62, distance: 2800, target: [-500, 350, 0] } })
+add({ id: 'muffler', ko: '머플러', en: 'Muffler', geometry: mufflerGeometry(), mount: [-450, 240, 190], rot: [0, 0, Math.PI / 2 - 0.18], material: 'stainless', camera: { azimuth: -30, polar: 66, distance: 2600, target: [-650, 290, 120] } })
 add({ id: 'brake_pedal', ko: '브레이크 페달', en: 'Brake Pedal', geometry: { type: 'composite', children: [{ geometry: { type: 'box', size: [180, 14, 14] } }, { geometry: { type: 'box', size: [40, 14, 40] }, position: [90, 0, 20] }] }, mount: [-300, 330, 200], material: 'steel', small: true })
 add({ id: 'shift_lever', ko: '시프트 레버', en: 'Shift Lever', geometry: { type: 'composite', children: [{ geometry: { type: 'box', size: [180, 14, 14] } }, { geometry: { type: 'box', size: [40, 14, 40] }, position: [90, 0, -20] }] }, mount: [-300, 330, -200], material: 'steel', small: true })
 add({ id: 'rider_peg', ko: '라이더 스텝', en: 'Rider Footpeg', geometry: { type: 'composite', children: [{ geometry: { type: 'cylinder', radiusTop: 12, radiusBottom: 12, height: 90, segments: 10 }, rotation: [Math.PI / 2, 0, 0] }] }, mount: [0, 0, 0], material: 'steel', small: true,
@@ -350,8 +354,9 @@ add({ id: 'lever', ko: '브레이크 · 클러치 레버', en: 'Brake / Clutch L
   ] })
 
 // --- L~M. 외장·도색 (Task B6) --------------------------------------------------
-add({ id: 'upper_cowl', ko: '어퍼 카울', en: 'Upper Cowl', geometry: upperCowl(), mount: UPPER_COWL_BASE, material: 'primer', paintable: true, requires: ['lever'], camera: { azimuth: 25, polar: 60, distance: 3200, target: [560, 880, 0] } })
+add({ id: 'upper_cowl', ko: '어퍼 카울', en: 'Upper Cowl', geometry: upperCowl(), mount: UPPER_COWL_BASE, material: 'primer', paintable: true, requires: ['lever'], camera: { azimuth: 30, polar: 58, distance: 2800, target: [520, 890, 0] } })
 add({ id: 'side_cowl', ko: '사이드 카울', en: 'Side Cowl', geometry: sideCowl(1), mount: SIDE_COWL_BASE(1), material: 'primer', paintable: true,
+  camera: { azimuth: 45, polar: 62, distance: 3000, target: [150, 560, 0] },
   instances: [
     { suffix: 'l', mount: SIDE_COWL_BASE(-1), geometry: sideCowl(-1) },
     { suffix: 'r', mount: SIDE_COWL_BASE(1), geometry: sideCowl(1) },
@@ -362,8 +367,10 @@ add({ id: 'lower_cowl', ko: '로어 카울', en: 'Lower Cowl', geometry: lowerCo
     { suffix: 'r', mount: LOWER_COWL_BASE(1), geometry: lowerCowl(1) },
   ] })
 add({ id: 'windscreen', ko: '윈드스크린', en: 'Windscreen', geometry: windscreenGeometry(), mount: WINDSCREEN_BASE, material: 'glass', small: true })
-add({ id: 'tail_cowl', ko: '테일 카울', en: 'Tail Cowl', geometry: tailCowl(), mount: TAIL_COWL_BASE, material: 'primer', paintable: true, camera: { azimuth: -150, polar: 60, distance: 3200, target: [-680, 830, 0] } })
-add({ id: 'rear_hugger', ko: '리어 허거', en: 'Rear Hugger', geometry: fenderArch(REAR_TIRE_R + 24, 186, [-35, 45], [0, 300, 0]), mount: [REAR_AXLE[0], REAR_AXLE[1] + 300, 0], material: 'plastic_black', small: true })
+add({ id: 'tail_cowl', ko: '테일 카울', en: 'Tail Cowl', geometry: tailCowl(), mount: TAIL_COWL_BASE, material: 'primer', paintable: true, camera: { azimuth: -135, polar: 58, distance: 2400, target: [-710, 780, 0] } })
+// 앞쪽 스윕을 +45°에서 +18°로 줄였다. +23.5° 자리에서 리어 쇼크 로드가 반지름 330을 뚫고
+// 나오던 것을 이걸로 피한다 (parts.test.ts가 두 bbox가 안 겹치는지 지킨다).
+add({ id: 'rear_hugger', ko: '리어 허거', en: 'Rear Hugger', geometry: fenderArch(REAR_TIRE_R + 24, 186, [-35, 18], [0, 300, 0]), mount: [REAR_AXLE[0], REAR_AXLE[1] + 300, 0], material: 'plastic_black', small: true })
 add({ id: 'rider_seat', ko: '라이더 시트', en: 'Rider Seat', geometry: seatGeometry('rider'), mount: RIDER_SEAT_BASE, material: 'plastic_black' })
 add({ id: 'passenger_seat', ko: '동승자 시트', en: 'Passenger Seat', geometry: seatGeometry('pillion'), mount: PILLION_SEAT_BASE, material: 'plastic_black' })
 // 미러 뿌리는 어퍼 카울 어깨(x=540에서 표면 (y 932, z 112))다. 좌우는 geometry로 뒤집는다.
@@ -376,7 +383,7 @@ add({ id: 'paint', ko: '도색', en: 'Paint', geometry: { type: 'box', size: [10
 // 도색까지 끝나면 마지막으로 키를 꽂는다 — 정규 부품 81번째. 다 장착되면 phase가 assembly에서 바로 keyed로 넘어간다.
 add({ id: 'ignition_key', ko: '키', en: 'Ignition Key', geometry: keyGeometry(), mount: KEY_MOUNT, rot: [0, 0, 0], material: 'steel',
   requires: ['paint'], small: true, hint: '키 삽입', phaseOnMount: 'keyed',
-  camera: { azimuth: 20, polar: 55, distance: 900, target: [530, 962, 40] } })
+  camera: { azimuth: -55, polar: 38, distance: 1000, target: [520, 960, 30] } })
 
 // 빌드 ---------------------------------------------------------------------
 function build(): PartDef[] {

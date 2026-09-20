@@ -435,7 +435,8 @@ export function cylinderHeadGeometry(): Geometry {
   }
 }
 
-/** 캠 커버: 아래가 넓고 위가 좁은 loft 4단면 + 윗면 덮개 + 플러그 홀 보스 2개 */
+/** 캠 커버: 아래가 넓고 위가 좁은 loft 4단면 + 윗면 덮개 + 플러그 홀 보스 2개.
+ *  폭은 실린더 헤드(z ±120)보다 안쪽인 ±104다 — 탱크 밑단 아래로 들어가야 옆구리로 비치지 않는다. */
 export function camCoverGeometry(h = 52): Geometry {
   const rect = (y: number, hx: number, hz: number): Vec3[] => [
     [hx, y, hz], [hx, y, -hz], [-hx, y, -hz], [-hx, y, hz],
@@ -449,8 +450,8 @@ export function camCoverGeometry(h = 52): Geometry {
   return {
     type: 'composite',
     children: [
-      { geometry: { type: 'loft', sections: [rect(0, 116, 122), rect(18, 113, 119), rect(40, 102, 108), rect(h, 86, 90)], closed: true, smooth: false } },
-      { geometry: { type: 'extrude', shape: ccw([[-86, h - 2], [86, h - 2], [86, h + 6], [-86, h + 6]]), depth: 180, bevel: 2 } },
+      { geometry: { type: 'loft', sections: [rect(0, 116, 104), rect(18, 113, 102), rect(40, 102, 96), rect(h, 86, 84)], closed: true, smooth: false } },
+      { geometry: { type: 'extrude', shape: ccw([[-86, h - 2], [86, h - 2], [86, h + 6], [-86, h + 6]]), depth: 168, bevel: 2 } },
       { geometry: boss, position: [0, h + 4, -half] },
       { geometry: boss, position: [0, h + 4, half] },
     ],
@@ -515,9 +516,10 @@ export function exhaustHeader(side: 1 | -1): Geometry {
   return { type: 'tube', radius: 19, radial: 14, segments: 140, path: pts.map(to) }
 }
 
-/** 집합부 중심선. 엔진 밑을 지나 오른쪽 머플러 입구까지. 오일팬(y 230..280)을 밑으로 비껴간다. */
+/** 집합부 중심선. 엔진 밑을 지나 오른쪽 머플러 입구까지. 오일팬(y 230..280)을 밑으로 비껴간다.
+ *  뒤 지그 기둥(x -440..-360, |z| <= 120)을 z 바깥으로 돌아 나간다 — parts.test.ts가 지킨다. */
 export const EXHAUST_COLLECTOR_PATH: Vec3[] = [
-  [180, 206, 75], [40, 188, 78], [-140, 190, 92], [-300, 196, 128], [-410, 220, 168], [-448, 238, 186],
+  [180, 206, 75], [40, 188, 78], [-140, 190, 94], [-290, 196, 142], [-410, 222, 178], [-448, 238, 186],
 ]
 
 /** 배기 집합부. 원점은 경로 첫 점 = 헤더 두 본이 만나는 자리. */
@@ -659,16 +661,27 @@ const rebase = (sections: Vec3[][], base: Vec3): Vec3[][] => sections.map((s) =>
 // 연료탱크 --------------------------------------------------------------------
 // 앞이 높고 뒤로 가며 좁아진다. 밑면 y=760은 프레임 메인 스파(|z| >= 152) 안쪽이라
 // 스파는 탱크 옆을 비껴가고, 백본(z=0)만 껍데기 안을 지난다.
+//
+// 옆구리는 캠 커버(|z| <= 104, y <= 838)를 덮어야 한다. 그래서 (a) 링 밑변을 0.7배에서
+// 0.94배로 키워 밑단이 거의 수직으로 떨어지고, (b) 무릎 자리(x -60..120)를 반폭 114~120으로
+// 넓히고, (c) 뒤쪽 밑면을 760에서 808까지 들어 올려 엔진 윗면 뒤끝과 아예 겹치지 않게 했다.
+// 반폭 상한은 120 — 메인 스파 샘플의 최소 여유가 124.3이라 그보다 넓히면 스파를 먹는다.
 const TANK_X = [300, 240, 180, 120, 60, 0, -60, -120]
-const TANK_HALF = [60, 95, 115, 120, 110, 95, 75, 55]
-const TANK_TOP = [860, 900, 940, 960, 950, 920, 890, 860]
-const TANK_BOTTOM = 760
+const TANK_HALF = [62, 98, 114, 120, 120, 114, 96, 62]
+const TANK_TOP = [860, 900, 940, 960, 950, 920, 890, 862]
+const TANK_BOTTOM = [760, 760, 760, 760, 760, 762, 784, 808]
+
+/** 탱크 링 단면 — RING10보다 밑변이 넓다(0.94배). 무릎 아래가 수직으로 떨어진다. */
+const TANK_RING: Profile = [
+  [0.94, 0], [1, 0.3], [0.95, 0.66], [0.66, 0.9], [0.24, 1],
+  [-0.24, 1], [-0.66, 0.9], [-0.95, 0.66], [-1, 0.3], [-0.94, 0],
+]
 
 /** 연료탱크 원점 — 밑면 중앙 */
-export const TANK_BASE: Vec3 = [90, TANK_BOTTOM, 0]
+export const TANK_BASE: Vec3 = [90, TANK_BOTTOM[0], 0]
 
 export function tankGeometry(base: Vec3 = TANK_BASE): Geometry {
-  const at = (i: number, shrink = 1) => symSection(RING10, TANK_X[i], TANK_HALF[i], TANK_BOTTOM, TANK_TOP[i], shrink)
+  const at = (i: number, shrink = 1) => symSection(TANK_RING, TANK_X[i], TANK_HALF[i], TANK_BOTTOM[i], TANK_TOP[i], shrink)
   const last = TANK_X.length - 1
   const sections = [at(0, 0.12), ...TANK_X.map((_, i) => at(i)), at(last, 0.12)]
   return {
@@ -688,11 +701,11 @@ export function tankGeometry(base: Vec3 = TANK_BASE): Geometry {
 // 시트 ------------------------------------------------------------------------
 const SEAT = {
   rider: { x: [-120, -220, -320, -420, -520], half: [100, 122, 130, 124, 110], top: [800, 797, 795, 792, 790], depth: 66 },
-  pillion: { x: [-540, -610, -680, -750, -820], half: [110, 104, 96, 88, 80], top: [830, 842, 855, 868, 880], depth: 56 },
+  pillion: { x: [-540, -610, -680, -750, -820], half: [110, 104, 96, 88, 80], top: [818, 830, 842, 854, 866], depth: 56 },
 } as const
 
 export const RIDER_SEAT_BASE: Vec3 = [-320, 730, 0]
-export const PILLION_SEAT_BASE: Vec3 = [-680, 770, 0]
+export const PILLION_SEAT_BASE: Vec3 = [-680, 758, 0]
 
 /** 시트: 위가 평평한 패드. 밑면은 서브프레임 레일보다 위에 있다. */
 export function seatGeometry(kind: 'rider' | 'pillion', base: Vec3 = kind === 'rider' ? RIDER_SEAT_BASE : PILLION_SEAT_BASE): Geometry {
@@ -749,10 +762,13 @@ export function lowerCowl(side: 1 | -1, base: Vec3 = LOWER_COWL_BASE(side)): Geo
 
 // 테일 카울 -------------------------------------------------------------------
 // 뒤로 가며 좁아지면서 치켜 올라간다. 뒷면은 축소 단면으로 막고 그 위에 후미등이 앉는다.
+// 윗마루는 동승자 시트 윗면보다 15mm쯤 낮게 따라가(시트 패드가 그만큼만 도드라진다),
+// 밑단은 서브프레임 시트 레일(x -596에서 y 664, x -900에서 y 738, 튜브 r12) 아래로
+// 내려 레일 뒤끝을 덮는다. 레일이 |z| 86~122라 옆구리에서는 아래쪽 끝이 조금 비어져 나온다.
 const TAIL_X = [-520, -596, -672, -748, -824, -900]
-const TAIL_HALF = [130, 124, 114, 100, 78, 60]
-const TAIL_TOP = [800, 820, 840, 862, 882, 900]
-const TAIL_BOT = [700, 724, 748, 772, 796, 820]
+const TAIL_HALF = [130, 127, 120, 110, 95, 78]
+const TAIL_TOP = [806, 818, 830, 842, 856, 868]
+const TAIL_BOT = [664, 674, 686, 698, 710, 722]
 
 export const TAIL_COWL_BASE: Vec3 = [-710, 800, 0]
 

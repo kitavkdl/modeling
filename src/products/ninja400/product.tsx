@@ -26,7 +26,7 @@ export const ninja400Product: ProductDef = {
   camera: {
     initial: { azimuth: 30, polar: 64, distance: 4800 },
     target: [0, 500, 0],
-    minDistanceMm: 1200,
+    minDistanceMm: 900, // 키 삽입 뷰(1000)가 잘리지 않도록 — 계기판 키 구멍이 보여야 한다
     maxDistanceMm: 7000,
     minPolarDeg: 20,
     maxPolarDeg: 85,
