@@ -313,21 +313,6 @@ export function forkLeg(len: number, upperR: number, lowerR: number, lowerLen: n
   return { type: 'composite', children }
 }
 
-/** 카울: 밑면 기준. 아래가 넓고 위가 좁은 사다리꼴 껍데기 */
-export function cowl(size: Vec3, taper: number): Geometry {
-  const [w, h, d] = size
-  return { type: 'frustum', bottom: [w, d], top: [w * taper, d * taper], h }
-}
-
-/** 연료탱크: 2단 frustum. 밑면 기준 */
-export function tank(): Geometry {
-  const children: CompositeChild[] = [
-    { geometry: { type: 'frustum', bottom: [380, 280], top: [340, 240], h: 90 } },
-    { geometry: { type: 'frustum', bottom: [340, 240], top: [220, 150], h: 110 }, position: [0, 90, 0] },
-  ]
-  return { type: 'composite', children }
-}
-
 /** 모서리가 둥근 사각형 윤곽. extrude.shape로 쓴다 — 중심이 원점, w×h 크기, 모서리 반지름 r */
 function roundedRect(w: number, h: number, r: number, seg = 4): [number, number][] {
   const hw = w / 2
@@ -612,4 +597,339 @@ export function coolingFan(tip = 96, blades = 7): Geometry {
     children.push({ geometry: blade, rotation: [0, 0, (i / blades) * Math.PI * 2] })
   }
   return { type: 'composite', children }
+}
+
+// --- 외장 · 램프 · 조작계 -------------------------------------------------------
+// 외장은 x(앞뒤) 스테이션마다 yz 평면 위 10점 단면을 놓고 loft로 잇는다. 좌표는 차체
+// 절대값으로 적고 base(= 부품 마운트)를 빼서 상대 좌표로 넘긴다.
+// loft는 뚜껑을 만들지 않는다. 끝을 막아야 하는 껍데기는 같은 x에 축소 단면을 하나 더 둬서
+// 납작한 벽을 세운다. 좌우가 다른 패널은 오른쪽만 적고 mirrorZ로 왼쪽을 만든다.
+
+/** 단면 윤곽 비율 */
+type Profile = ReadonlyArray<readonly [number, number]>
+
+/** 탱크·테일 링 단면 [z 비율, y 비율]. 밑변이 최대 폭의 0.7배라 위로 갈수록 둥글다 */
+const RING10: Profile = [
+  [0.7, 0], [1, 0.34], [0.92, 0.68], [0.62, 0.92], [0.22, 1],
+  [-0.22, 1], [-0.62, 0.92], [-0.92, 0.68], [-1, 0.34], [-0.7, 0],
+]
+
+/** 시트 패드 — 윗면이 더 평평하다 */
+const PAD10: Profile = [
+  [0.86, 0], [1, 0.34], [0.99, 0.7], [0.82, 0.92], [0.45, 1],
+  [-0.45, 1], [-0.82, 0.92], [-0.99, 0.7], [-1, 0.34], [-0.86, 0],
+]
+
+/** 아래가 열린 셸(어퍼 카울·윈드스크린) — 아래 양 끝이 최대 폭이다 */
+const SHELL10: Profile = [
+  [1, 0], [0.99, 0.34], [0.9, 0.64], [0.66, 0.88], [0.35, 0.99],
+  [-0.35, 0.99], [-0.66, 0.88], [-0.9, 0.64], [-0.99, 0.34], [-1, 0],
+]
+
+/** 사이드 카울 [y 비율(1 위 ~ 0 아래), z 비율]. 허리가 가장 부풀고 아래로 가며 접힌다 */
+const SIDE_PANEL: Profile = [
+  [1, 0.6], [0.92, 0.85], [0.81, 0.97], [0.68, 1], [0.56, 0.99],
+  [0.45, 0.95], [0.34, 0.89], [0.24, 0.81], [0.13, 0.7], [0, 0.55],
+]
+
+/** 로어 카울(벨리팬) — 위는 사이드 카울 밑단에 붙고 아래로 갈수록 안쪽으로 말린다 */
+const LOWER_PANEL: Profile = [
+  [1, 1], [0.88, 1.02], [0.76, 1.01], [0.63, 0.97], [0.51, 0.91],
+  [0.4, 0.83], [0.29, 0.73], [0.19, 0.6], [0.09, 0.45], [0, 0.26],
+]
+
+/** 좌우 대칭 단면 하나. shrink는 단면 중심 기준 축소 — 끝을 막는 벽에 쓴다. */
+function symSection(profile: Profile, x: number, halfW: number, yBot: number, yTop: number, shrink = 1): Vec3[] {
+  const cy = (yBot + yTop) / 2
+  return profile.map(([fz, fy]): Vec3 => [x, cy + (yBot + (yTop - yBot) * fy - cy) * shrink, halfW * fz * shrink])
+}
+
+/** 한쪽만 있는 패널 단면 */
+function panelSection(profile: Profile, x: number, yBot: number, yTop: number, zMax: number): Vec3[] {
+  return profile.map(([fy, fz]): Vec3 => [x, yBot + (yTop - yBot) * fy, zMax * fz])
+}
+
+/** 단면들을 z 대칭으로 뒤집는다. 점 순서도 뒤집어 면의 앞뒤가 유지된다. */
+export function mirrorZ(sections: Vec3[][]): Vec3[][] {
+  return sections.map((s) => s.map(([x, y, z]): Vec3 => [x, y, -z]).reverse())
+}
+
+const rebase = (sections: Vec3[][], base: Vec3): Vec3[][] => sections.map((s) => s.map(sub(base)))
+
+// 연료탱크 --------------------------------------------------------------------
+// 앞이 높고 뒤로 가며 좁아진다. 밑면 y=760은 프레임 메인 스파(|z| >= 152) 안쪽이라
+// 스파는 탱크 옆을 비껴가고, 백본(z=0)만 껍데기 안을 지난다.
+const TANK_X = [300, 240, 180, 120, 60, 0, -60, -120]
+const TANK_HALF = [60, 95, 115, 120, 110, 95, 75, 55]
+const TANK_TOP = [860, 900, 940, 960, 950, 920, 890, 860]
+const TANK_BOTTOM = 760
+
+/** 연료탱크 원점 — 밑면 중앙 */
+export const TANK_BASE: Vec3 = [90, TANK_BOTTOM, 0]
+
+export function tankGeometry(base: Vec3 = TANK_BASE): Geometry {
+  const at = (i: number, shrink = 1) => symSection(RING10, TANK_X[i], TANK_HALF[i], TANK_BOTTOM, TANK_TOP[i], shrink)
+  const last = TANK_X.length - 1
+  const sections = [at(0, 0.12), ...TANK_X.map((_, i) => at(i)), at(last, 0.12)]
+  return {
+    type: 'composite',
+    children: [
+      { geometry: { type: 'loft', closed: true, sections: rebase(sections, base) } },
+      // 주유구 캡 — 탱크 등선(x=80에서 y≈953)에 얹는다
+      {
+        geometry: { type: 'lathe', segments: 24, profile: [[0, 0], [45, 0], [45, 9], [40, 15], [0, 17]] },
+        position: sub(base)([80, 945, 0]),
+        material: 'polished_alu',
+      },
+    ],
+  }
+}
+
+// 시트 ------------------------------------------------------------------------
+const SEAT = {
+  rider: { x: [-120, -220, -320, -420, -520], half: [100, 122, 130, 124, 110], top: [800, 797, 795, 792, 790], depth: 66 },
+  pillion: { x: [-540, -610, -680, -750, -820], half: [110, 104, 96, 88, 80], top: [830, 842, 855, 868, 880], depth: 56 },
+} as const
+
+export const RIDER_SEAT_BASE: Vec3 = [-320, 730, 0]
+export const PILLION_SEAT_BASE: Vec3 = [-680, 770, 0]
+
+/** 시트: 위가 평평한 패드. 밑면은 서브프레임 레일보다 위에 있다. */
+export function seatGeometry(kind: 'rider' | 'pillion', base: Vec3 = kind === 'rider' ? RIDER_SEAT_BASE : PILLION_SEAT_BASE): Geometry {
+  const s = SEAT[kind]
+  const at = (i: number, shrink = 1) => symSection(PAD10, s.x[i], s.half[i], s.top[i] - s.depth, s.top[i], shrink)
+  const last = s.x.length - 1
+  const sections = [at(0, 0.18), ...s.x.map((_, i) => at(i)), at(last, 0.18)]
+  return { type: 'loft', closed: true, sections: rebase(sections, base) }
+}
+
+// 어퍼 카울 -------------------------------------------------------------------
+// 앞 단면(x=640)이 곧 헤드라이트가 앉는 낯짝이다 — 폭 240에 높이 92로 좁고 납작하게 시작해
+// 뒤로 가며 벌어진다. 윗마루가 x=596에서 가장 높고(y=1000) 거기서 윈드스크린이 올라간다.
+// 마루는 뒤로 내려와 탱크 앞으로 이어지고, 밑단은 사이드 카울 윗단과 겹친다.
+const UPPER_X = [640, 596, 552, 500, 440, 380]
+const UPPER_HALF = [120, 162, 180, 188, 191, 192]
+const UPPER_TOP = [930, 1000, 990, 966, 944, 925]
+const UPPER_BOT = [838, 812, 792, 778, 774, 782]
+
+export const UPPER_COWL_BASE: Vec3 = [500, 820, 0]
+
+export function upperCowl(base: Vec3 = UPPER_COWL_BASE): Geometry {
+  const sections = UPPER_X.map((x, i) => symSection(SHELL10, x, UPPER_HALF[i], UPPER_BOT[i], UPPER_TOP[i]))
+  return { type: 'loft', sections: rebase(sections, base) }
+}
+
+// 사이드 카울 -----------------------------------------------------------------
+// 앞은 라디에이터(x 223..257, |z| <= 125)를 감싸고, 밑단은 뒤로 가며 치켜 올라가 엔진
+// 아랫도리와 배기 헤더를 드러낸다. 앞쪽 밑단만 로어 카울 윗단과 만난다.
+const SIDE_X = [420, 330, 240, 150, 60, -30, -120]
+const SIDE_TOP = [820, 790, 758, 726, 700, 670, 640]
+const SIDE_BOT = [300, 322, 355, 400, 450, 500, 545]
+const SIDE_Z = [240, 238, 234, 228, 221, 215, 210]
+
+export const SIDE_COWL_BASE = (side: 1 | -1): Vec3 => [150, 520, 170 * side]
+
+export function sideCowl(side: 1 | -1, base: Vec3 = SIDE_COWL_BASE(side)): Geometry {
+  const right = SIDE_X.map((x, i) => panelSection(SIDE_PANEL, x, SIDE_BOT[i], SIDE_TOP[i], SIDE_Z[i]))
+  return { type: 'loft', sections: rebase(side === 1 ? right : mirrorZ(right), base) }
+}
+
+// 로어 카울(벨리팬) -----------------------------------------------------------
+const LOWER_X = [250, 130, 10, -120, -250]
+const LOWER_TOP_Y = [324, 340, 355, 368, 380]
+const LOWER_TOP_Z = [129, 126, 122, 117, 110]
+const LOWER_BOT_Y = [172, 178, 186, 194, 205]
+
+export const LOWER_COWL_BASE = (side: 1 | -1): Vec3 => [0, 280, 100 * side]
+
+export function lowerCowl(side: 1 | -1, base: Vec3 = LOWER_COWL_BASE(side)): Geometry {
+  const right = LOWER_X.map((x, i) => panelSection(LOWER_PANEL, x, LOWER_BOT_Y[i], LOWER_TOP_Y[i], LOWER_TOP_Z[i]))
+  return { type: 'loft', sections: rebase(side === 1 ? right : mirrorZ(right), base) }
+}
+
+// 테일 카울 -------------------------------------------------------------------
+// 뒤로 가며 좁아지면서 치켜 올라간다. 뒷면은 축소 단면으로 막고 그 위에 후미등이 앉는다.
+const TAIL_X = [-520, -596, -672, -748, -824, -900]
+const TAIL_HALF = [130, 124, 114, 100, 78, 60]
+const TAIL_TOP = [800, 820, 840, 862, 882, 900]
+const TAIL_BOT = [700, 724, 748, 772, 796, 820]
+
+export const TAIL_COWL_BASE: Vec3 = [-710, 800, 0]
+
+export function tailCowl(base: Vec3 = TAIL_COWL_BASE): Geometry {
+  const at = (i: number, shrink = 1) => symSection(RING10, TAIL_X[i], TAIL_HALF[i], TAIL_BOT[i], TAIL_TOP[i], shrink)
+  const last = TAIL_X.length - 1
+  const sections = [...TAIL_X.map((_, i) => at(i)), at(last, 0.15)]
+  return { type: 'loft', closed: true, sections: rebase(sections, base) }
+}
+
+// 윈드스크린 -----------------------------------------------------------------
+export const WINDSCREEN_BASE: Vec3 = [560, 1000, 0]
+
+/**
+ * 윈드스크린: 어퍼 카울 마루(x=572, y=1000)에서 올라오며 좁아지는 얇은 버블 3단면.
+ * 밑단 양 끝은 카울 표면보다 아래로 넣어 틈이 보이지 않게 하고, 계기판 포드(x <= 554,
+ * y <= 1023)보다 앞·위로만 지나간다.
+ */
+export function windscreenGeometry(base: Vec3 = WINDSCREEN_BASE): Geometry {
+  const sections = [
+    symSection(SHELL10, 576, 78, 900, 995),
+    symSection(SHELL10, 560, 66, 985, 1045),
+    symSection(SHELL10, 544, 48, 1040, 1085),
+  ]
+  return { type: 'loft', sections: rebase(sections, base) }
+}
+
+// 펜더 ------------------------------------------------------------------------
+
+/**
+ * 타이어를 감싸는 호. sweepDeg는 수직 위가 0이고 +가 앞이다. 단면은 폭 width에 10점이고
+ * 가운데가 thickness만큼 볼록, 양 끝은 타이어 쪽으로 말려 들어간다.
+ * 좌표는 휠 중심 기준이고 base만큼 빼서 부품 원점을 옮긴다.
+ */
+export function fenderArch(tireR: number, width: number, sweepDeg: [number, number], base: Vec3 = [0, 0, 0], thickness = 6, steps = 10): Geometry {
+  const [a0, a1] = sweepDeg
+  const half = width / 2
+  const zf = [-1, -0.94, -0.78, -0.52, -0.18, 0.18, 0.52, 0.78, 0.94, 1]
+  const sections: Vec3[][] = []
+  for (let i = 0; i <= steps; i++) {
+    const a = ((a0 + ((a1 - a0) * i) / steps) * Math.PI) / 180
+    const s = Math.sin(a)
+    const c = Math.cos(a)
+    sections.push(
+      zf.map((f): Vec3 => {
+        const r = tireR + thickness * (1 - f * f) - (5 * Math.max(0, Math.abs(f) - 0.85)) / 0.15
+        return [r * s - base[0], r * c - base[1], half * f - base[2]]
+      }),
+    )
+  }
+  return { type: 'loft', sections }
+}
+
+// 램프 ------------------------------------------------------------------------
+
+/** 헤드라이트 렌즈: 얕은 돔. lathe 축이 +y라 부품 쪽에서 [0,0,-π/2]로 앞(+x)을 보게 눕힌다. */
+export function headlightLens(r = 90, depth = 30): Geometry {
+  return {
+    type: 'lathe',
+    segments: 28,
+    profile: [[0, 0], [r, 0], [r * 0.99, depth * 0.25], [r * 0.92, depth * 0.55], [r * 0.72, depth * 0.8], [r * 0.4, depth * 0.95], [0, depth]],
+  }
+}
+
+/** 헤드라이트 유닛: 어퍼 카울 안에 들어가는 트윈 렌즈 + 뒤쪽 하우징. 원점은 렌즈 밑동 중앙 */
+export function headlightUnit(): Geometry {
+  const housing: Geometry = { type: 'lathe', segments: 20, profile: [[0, 0], [84, 0], [70, -34], [40, -54], [0, -60]] }
+  const lens = headlightLens()
+  const side = (s: 1 | -1): CompositeChild[] => [
+    { geometry: housing, position: [0, 0, 74 * s], rotation: [0, 0, -Math.PI / 2], scale: [0.62, 1, 0.69], material: 'plastic_black' },
+    // 재질을 비워 두면 부품 재질(lamp_off / 점화 후 lamp_on)을 그대로 받는다
+    { geometry: lens, position: [0, 0, 74 * s], rotation: [0, 0, -Math.PI / 2], scale: [0.62, 1, 0.69] },
+  ]
+  return { type: 'composite', children: [...side(1), ...side(-1)] }
+}
+
+/** 후미등 렌즈: lathe를 scale로 눌러 만든 타원 돔. 뒤(-x)를 본다. 원점은 렌즈 밑동 중앙 */
+export function tailLightLens(r = 45, depth = 26): Geometry {
+  const dome: Geometry = {
+    type: 'lathe',
+    segments: 24,
+    profile: [[0, 0], [r, 0], [r * 0.97, depth * 0.3], [r * 0.85, depth * 0.62], [r * 0.55, depth * 0.88], [0, depth]],
+  }
+  return {
+    type: 'composite',
+    children: [
+      { geometry: { type: 'lathe', segments: 20, profile: [[0, 0], [r * 1.06, 0], [r * 0.9, -20], [0, -26]] }, rotation: [0, 0, Math.PI / 2], scale: [0.72, 1, 1.35], material: 'plastic_black' },
+      { geometry: dome, rotation: [0, 0, Math.PI / 2], scale: [0.72, 1, 1.35] },
+    ],
+  }
+}
+
+/** 방향지시등: 스템 + 타원 렌즈. 원점은 카울에 닿는 뿌리, +z로 뻗는다 */
+export function turnSignal(): Geometry {
+  return {
+    type: 'composite',
+    children: [
+      { geometry: { type: 'cylinder', radiusTop: 7, radiusBottom: 9, height: 58, segments: 10 }, rotation: [Math.PI / 2, 0, 0], material: 'plastic_black' },
+      {
+        geometry: { type: 'lathe', segments: 18, profile: [[0, 0], [26, 0], [25, 10], [20, 18], [11, 23], [0, 25]] },
+        position: [0, 0, 58],
+        rotation: [Math.PI / 2, 0, 0],
+        scale: [0.8, 1, 1],
+      },
+    ],
+  }
+}
+
+// 조작계 ----------------------------------------------------------------------
+
+/** 그립: 고무 통에 끝 플랜지. lathe 축이 +y라 부품 쪽에서 [π/2,0,0]으로 눕혀 +z로 뻗는다 */
+export function gripGeometry(r = 16, len = 120, flange = 20): Geometry {
+  return {
+    type: 'lathe',
+    segments: 20,
+    profile: [
+      [0, 0], [r, 0], [r, 6], [r + 1, 10], [r, 14],
+      [r, len - 16], [flange - 1, len - 12], [flange, len - 6], [flange - 2, len], [0, len],
+    ],
+  }
+}
+
+/**
+ * 브레이크·클러치 레버. 원점이 레버 뿌리(퍼치)라 RideParts의 LeverPivot이 뿌리에서 돌린다
+ * — halfLength가 첫 자식 box의 x 길이 절반을 축 위치로 쓰므로 첫 자식은 작은 퍼치 블록이다.
+ */
+export function leverGeometry(side: 1 | -1): Geometry {
+  const path: Vec3[] = [[0, 0, 0], [38, -2, 14], [76, -6, 30], [112, -12, 44], [142, -20, 52]]
+  const p = (i: number): Vec3 => [path[i][0], path[i][1], path[i][2] * side]
+  return {
+    type: 'composite',
+    children: [
+      { geometry: { type: 'box', size: [10, 26, 34] }, position: [0, -13, 0], material: 'plastic_black' },
+      { geometry: { type: 'tube', radius: 6, radial: 10, segments: 40, path: [p(0), p(1), p(2)] } },
+      { geometry: { type: 'tube', radius: 4.5, radial: 10, segments: 40, path: [p(2), p(3), p(4)] } },
+    ],
+  }
+}
+
+/** 미러: 스템 tube + 하우징 loft 4단면. 원점은 카울에 닿는 스템 뿌리 */
+export function mirrorGeometry(side: 1 | -1): Geometry {
+  const stem: Vec3[] = [[0, 0, 0], [-14, 30, 22], [-32, 56, 52], [-46, 72, 88], [-52, 80, 125]]
+  const c: Vec3 = [-52, 92, 122]
+  // 하우징 단면: 앞(작음) → 거울면(가장 큼). x가 깊이 방향이다
+  const steps: Array<[number, number, number]> = [[30, 0.34, 0.3], [8, 0.74, 0.7], [-12, 0.96, 0.95], [-30, 1, 1]]
+  const hy = 40
+  const hz = 62
+  const ring = (dx: number, fy: number, fz: number): Vec3[] =>
+    Array.from({ length: 10 }, (_, i) => {
+      const a = (i / 10) * Math.PI * 2
+      return [c[0] + dx, c[1] + hy * fy * Math.sin(a), (c[2] + hz * fz * Math.cos(a)) * side] as Vec3
+    })
+  return {
+    type: 'composite',
+    children: [
+      { geometry: { type: 'tube', radius: 9, radial: 10, segments: 48, path: stem.map((p): Vec3 => [p[0], p[1], p[2] * side]) } },
+      { geometry: { type: 'loft', closed: true, sections: steps.map(([dx, fy, fz]) => ring(dx, fy, fz)) } },
+      // 거울면
+      {
+        geometry: { type: 'extrude', shape: roundedRect(74, 46, 12, 5), depth: 4, bevel: 1 },
+        position: [c[0] - 31, c[1], c[2] * side],
+        rotation: [0, Math.PI / 2, 0],
+        material: 'glass',
+      },
+    ],
+  }
+}
+
+/** 계기판: 8각 압출 포드 + 화면 + 키 실린더. 화면만 재질을 비워 둬서 점화 때 켜진다. */
+export function clusterGeometry(keyLocal: Vec3, keyRot: number): Geometry {
+  const pod = ccw([[-18, 2], [-11, 0], [11, 0], [18, 2], [18, 70], [11, 72], [-11, 72], [-18, 70]])
+  return {
+    type: 'composite',
+    children: [
+      { geometry: { type: 'extrude', shape: pod, depth: 200, bevel: 2 }, material: 'plastic_black' },
+      { geometry: { type: 'roundedBox', size: [6, 28, 140], radius: 4 }, position: [-23, 8, 0] },
+      { geometry: { type: 'cylinder', radiusTop: 12, radiusBottom: 12, height: 20, segments: 16 }, position: keyLocal, rotation: [0, 0, keyRot], material: 'polished_alu' },
+    ],
+  }
 }

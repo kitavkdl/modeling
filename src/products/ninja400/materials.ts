@@ -11,18 +11,20 @@ export const NINJA_MATERIALS: Record<string, MaterialSpec> = {
   steel: { color: '#a9adb3', metalness: 0.85, roughness: 0.4 },
   stainless: { color: '#c5c8cc', metalness: 0.9, roughness: 0.35 },
   rubber: { color: '#151617', metalness: 0, roughness: 0.95 },
-  plastic_black: { color: '#1e1f22', metalness: 0, roughness: 0.6 },
-  primer: { color: '#7a7b7d', metalness: 0, roughness: 0.9 },
-  glass: { color: '#1a1b1e', metalness: 0.6, roughness: 0.1, transparent: true, opacity: 0.35 },
+  // 시트·펜더·카울은 뚜껑 없는 loft 껍데기라 안쪽 면도 그려야 구멍이 뚫려 보이지 않는다.
+  plastic_black: { color: '#1e1f22', metalness: 0, roughness: 0.6, side: THREE.DoubleSide },
+  primer: { color: '#7a7b7d', metalness: 0, roughness: 0.9, side: THREE.DoubleSide },
+  glass: { color: '#1a1b1e', metalness: 0.6, roughness: 0.1, transparent: true, opacity: 0.35, side: THREE.DoubleSide },
   lamp_off: { color: '#3a3b3e', metalness: 0.1, roughness: 0.3 },
   lamp_on: { color: '#fff4dc', emissive: '#ffe9b8', emissiveIntensity: 2.5, metalness: 0, roughness: 0.4 },
   chain: { color: '#5c5e62', metalness: 0.8, roughness: 0.5 },
   bench: { color: '#2a2b2e', metalness: 0.2, roughness: 0.8 },
   // 라디에이터 코어 — 핀이 촘촘한 매트릭스라 거의 무광 검정으로 본다
   radiator_core: { color: '#26282b', metalness: 0.3, roughness: 0.85 },
-  paint_krt: { physical: true, color: '#69be28', metalness: 0.6, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.1 },
-  paint_blue: { physical: true, color: '#1d3f9e', metalness: 0.6, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.1 },
-  paint_black: { physical: true, color: '#1a1b1e', metalness: 0.6, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.1 },
+  // 도색 3색도 primer와 같은 껍데기에 입혀지므로 양면이다.
+  paint_krt: { physical: true, color: '#69be28', metalness: 0.6, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.1, side: THREE.DoubleSide },
+  paint_blue: { physical: true, color: '#1d3f9e', metalness: 0.6, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.1, side: THREE.DoubleSide },
+  paint_black: { physical: true, color: '#1a1b1e', metalness: 0.6, roughness: 0.3, clearcoat: 1, clearcoatRoughness: 0.1, side: THREE.DoubleSide },
 }
 
 /** 외장 도색 선택지 */

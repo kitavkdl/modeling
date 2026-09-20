@@ -224,6 +224,26 @@ describe('ninja400 parts', () => {
     expect(uses('radiator', 'extrude')).toBe(true)
     expect(uses('radiator_hose', 'tube')).toBe(true)
     expect(uses('cooling_fan', 'extrude')).toBe(true)
+    // Task 10 — 외장·램프·조작계
+    expect(uses('fuel_tank', 'loft')).toBe(true)
+    expect(uses('fuel_tank', 'lathe')).toBe(true)
+    expect(uses('rider_seat', 'loft')).toBe(true)
+    expect(uses('passenger_seat', 'loft')).toBe(true)
+    expect(uses('upper_cowl', 'loft')).toBe(true)
+    expect(uses('side_cowl', 'loft')).toBe(true)
+    expect(uses('lower_cowl', 'loft')).toBe(true)
+    expect(uses('tail_cowl', 'loft')).toBe(true)
+    expect(uses('windscreen', 'loft')).toBe(true)
+    expect(uses('front_fender', 'loft')).toBe(true)
+    expect(uses('rear_hugger', 'loft')).toBe(true)
+    expect(uses('headlight', 'lathe')).toBe(true)
+    expect(uses('taillight', 'lathe')).toBe(true)
+    expect(uses('turn_signal', 'lathe')).toBe(true)
+    expect(uses('mirror', 'loft')).toBe(true)
+    expect(uses('mirror', 'tube')).toBe(true)
+    expect(uses('clip_on', 'lathe')).toBe(true)
+    expect(uses('lever', 'tube')).toBe(true)
+    expect(uses('instrument_cluster', 'extrude')).toBe(true)
     // 크랭크케이스가 프레임 여유 테스트의 기준 봉투(x -330..90, y 280..550, |z| <= 190) 안에 든다.
     // 둔각 모서리에서 베벨 마이터가 bevelSize를 아주 조금 넘어서 x만 1mm 여유를 둔다.
     const lower = instanceBounds(PART_BY_ID.crankcase_lower.instances[0])
@@ -233,6 +253,84 @@ describe('ninja400 parts', () => {
     expect(lower.min[1]).toBeCloseTo(280, 1)
     expect(upper.max[1]).toBeCloseTo(550, 1)
     for (const b of [lower, upper]) expect(Math.max(-b.min[2], b.max[2])).toBeLessThanOrEqual(190.01)
+  })
+  it('좌우 외장은 인스턴스마다 뒤집힌 geometry를 쓰고 z로 대칭이다', () => {
+    for (const id of ['side_cowl', 'lower_cowl', 'mirror', 'lever']) {
+      const [l, r] = PART_BY_ID[id].instances
+      expect(l.geometry, id).not.toBe(r.geometry)
+      const lb = instanceBounds(l)
+      const rb = instanceBounds(r)
+      expect(lb.min[2], `${id} z`).toBeCloseTo(-rb.max[2], 3)
+      expect(lb.max[2], `${id} z`).toBeCloseTo(-rb.min[2], 3)
+      expect(lb.min[1], `${id} y`).toBeCloseTo(rb.min[1], 3)
+      expect(lb.min[0], `${id} x`).toBeCloseTo(rb.min[0], 3)
+    }
+  })
+  it('탱크가 프레임 메인 스파 안쪽에 얹히고 시트는 서브프레임 레일 위에 앉는다', () => {
+    const tank = instanceBounds(PART_BY_ID.fuel_tank.instances[0])
+    const rider = instanceBounds(PART_BY_ID.rider_seat.instances[0])
+    const pillion = instanceBounds(PART_BY_ID.passenger_seat.instances[0])
+
+    // 탱크는 프레임 상부 튜브대(메인 스파 y 780~925, 백본 y 805~908) 위에 얹힌다
+    expect(tank.min[1]).toBeGreaterThanOrEqual(740)
+    expect(tank.max[1]).toBeLessThanOrEqual(1000)
+    // 메인 스파(|z| >= 140)는 탱크 옆구리 바깥을 지난다. 중앙 백본과 그 브레이스(|z| < 140)는
+    // 실물처럼 탱크 껍데기 안을 지나므로 뺀다.
+    for (const { point: [x, y, z], radius } of frameSamples()) {
+      if (Math.abs(z) < 140) continue
+      if (x < tank.min[0] || x > tank.max[0] || y < tank.min[1] || y > tank.max[1]) continue
+      expect(Math.abs(z) - radius, `spar (${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)})`).toBeGreaterThan(tank.max[2])
+    }
+    // 탱크 → 라이더 시트 → 동승자 시트가 앞뒤로 겹치지 않는다
+    expect(tank.min[0]).toBeGreaterThanOrEqual(rider.max[0])
+    expect(rider.min[0]).toBeGreaterThanOrEqual(pillion.max[0])
+    // 시트 두 장 다 서브프레임 레일보다 위에 있다
+    for (const seat of [rider, pillion]) {
+      for (const { point: [x, y, z], radius } of partTubeSamples([PART_BY_ID.subframe], 200)) {
+        const inside =
+          x >= seat.min[0] && x <= seat.max[0] &&
+          y >= seat.min[1] - radius && y <= seat.max[1] + radius &&
+          z >= seat.min[2] - radius && z <= seat.max[2] + radius
+        expect(inside, `rail (${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)})`).toBe(false)
+      }
+    }
+  })
+  it('펜더가 타이어를 감싸고 카울이 라디에이터를 덮는다', async () => {
+    const { FRONT_AXLE, FRONT_TIRE_R } = await import('./spec')
+    const fender = instanceBounds(PART_BY_ID.front_fender.instances[0])
+    // 타이어 위를 덮되 20~45mm 안쪽에서 돈다
+    expect(fender.max[1] - FRONT_AXLE[1]).toBeGreaterThan(FRONT_TIRE_R + 15)
+    expect(fender.max[1] - FRONT_AXLE[1]).toBeLessThan(FRONT_TIRE_R + 45)
+    // 액슬보다 한참 위에서 끝난다 (포크 다리를 물지 않는다)
+    expect(fender.min[1]).toBeGreaterThan(FRONT_AXLE[1] + 80)
+
+    // 사이드 카울이 라디에이터(x 223..257, y 385..665, |z| <= 125)를 옆에서 덮는다
+    const radiator = instanceBounds(PART_BY_ID.radiator.instances[0])
+    const cowl = instanceBounds(PART_BY_ID.side_cowl.instances[1])
+    expect(cowl.min[0]).toBeLessThan(radiator.min[0])
+    expect(cowl.max[0]).toBeGreaterThan(radiator.max[0])
+    expect(cowl.max[2]).toBeGreaterThan(radiator.max[2])
+    expect(cowl.min[1]).toBeLessThan(radiator.min[1])
+    expect(cowl.max[1]).toBeGreaterThan(radiator.max[1])
+  })
+  it('계기판 키 실린더가 점화 키 마운트에 수직으로 맞는다', () => {
+    const cluster = PART_BY_ID.instrument_cluster
+    const g = cluster.geometry
+    if (g.type !== 'composite') throw new Error('cluster geometry must be composite')
+    const bore = g.children.find((c) => c.geometry.type === 'cylinder')
+    if (!bore?.position || !bore.rotation) throw new Error('cluster key cylinder missing')
+    const root = new THREE.Object3D()
+    root.position.fromArray(cluster.mountPosition)
+    root.rotation.fromArray(cluster.mountRotation)
+    const child = new THREE.Object3D()
+    child.position.fromArray(bore.position)
+    child.rotation.fromArray(bore.rotation)
+    root.add(child)
+    root.updateMatrixWorld(true)
+    expect(child.getWorldPosition(new THREE.Vector3()).distanceTo(vec(PART_BY_ID.ignition_key.mountPosition))).toBeLessThan(1)
+    // 보어가 수직이라 키를 위에서 꽂는다
+    const axis = new THREE.Vector3(0, 1, 0).applyQuaternion(child.getWorldQuaternion(new THREE.Quaternion()))
+    expect(axis.angleTo(new THREE.Vector3(0, 1, 0))).toBeLessThan(1e-6)
   })
   it('전체 장착 bbox가 실물 외곽(1990×710×1120, ±10%) 안이다', () => {
     // 미러는 기본으로 빠진다(assemblyBounds의 exclude 기본값).
