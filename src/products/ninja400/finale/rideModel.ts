@@ -53,6 +53,11 @@ const EB_BASE = 3
 const EB_SLOPE = 2.5
 /** 이 아래 스로틀이면 아이들 거버너가 붙는다 (0~1) */
 const GOV_THROTTLE = 0.05
+/**
+ * 아이들 거버너 설정점 (rpm). 엔진 브레이크와 평형을 이루는 지점이 IDLE_RPM이 되도록 잡았다 —
+ * 0.2·(S − r) = 3 + 2.5·r/1000 을 r = 1300에 대해 풀면 S = 1331.
+ */
+const IDLE_SETPOINT = 1331
 /** 아이들 거버너 이득 (Nm per rpm) */
 const GOV_GAIN = 0.2
 /** 아이들 거버너 최대 토크 (Nm) */
@@ -83,7 +88,7 @@ const CLUTCH_TAU = 0.12
 const BRAKE_TAU = 0.1
 /** 스로틀은 목표까지 이만큼 남으면 목표에 붙인다 — 다 감은 그립은 전개, 놓은 그립은 완전히 닫힘 */
 const THROTTLE_SNAP = 0.004
-/** 시동이 꺼졌거나 꺼진 엔진의 회전이 0으로 내려가는 시정수 (초) */
+/** 시동을 걸지 않은(running=false) 엔진의 회전이 0으로 내려가는 시정수 (초). 스톨은 rpm을 바로 0으로 둔다 */
 const OFF_TAU = 0.2
 /** 물림/직결 전환이 프레임 길이에 흔들리지 않도록 내부에서 이만큼씩 쪼개 적분한다 (초) */
 const SUB_DT = 1 / 240
@@ -159,7 +164,7 @@ const approach = (v: number, target: number, tau: number, dt: number) => v + (ta
 function engineTorque(rpm: number, throttle: number): number {
   const brake = EB_BASE + (EB_SLOPE * rpm) / 1000
   let t = (rpm > MAX_RPM ? 0 : torqueWot(rpm)) * throttle - brake * (1 - throttle)
-  if (throttle < GOV_THROTTLE) t += Math.min(Math.max(GOV_GAIN * (IDLE_RPM - rpm), 0), GOV_MAX)
+  if (throttle < GOV_THROTTLE) t += Math.min(Math.max(GOV_GAIN * (IDLE_SETPOINT - rpm), 0), GOV_MAX)
   return t
 }
 
@@ -206,6 +211,9 @@ export function stepRide(s: RideSim, input: RideInputs, dt: number): RideSim {
       // 직결을 버틸 만한 요구 토크인지 — 저항을 엔진 축으로 환산해서 본다
       const load = (res * r) / ratio
       if (Math.abs(slip) <= LOCK_EPS && Math.abs(torque - load) <= cap) {
+        // 직결 진입 — 남은 회전차는 엔진이 접는다. 차체를 엔진 축으로 환산한 관성이
+        // J_E의 17배쯤이라(6단 기준) 붙는 쪽은 엔진이다. 이미 직결이면 slip이 0이라 무연산.
+        omega = sync
         // 직결 — 엔진과 차체가 한 덩어리로 돈다
         const jEff = J_E + (MASS * r * r) / (ratio * ratio)
         omega += ((torque - load) / jEff) * h

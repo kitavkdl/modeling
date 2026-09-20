@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  FINAL,
+  GEAR_RATIOS,
   IDLE_RPM,
   MAX_RPM,
+  PRIMARY,
   REAR_TIRE_R_M,
   gearRatio,
   shiftDown,
@@ -57,17 +60,21 @@ describe('구동계 물리 v2', () => {
     const s = run(base(), idle, 2)
     expect(s.rpm).toBeGreaterThan(IDLE_RPM - 60)
     expect(s.rpm).toBeLessThan(IDLE_RPM + 60)
+    // 거버너 설정점(IDLE_SETPOINT)이 엔진 브레이크와 평형을 이루는 지점 — 계기에 1300으로 보여야 한다
+    expect(Math.abs(s.rpm - IDLE_RPM)).toBeLessThan(15)
     expect(s.speed).toBe(0)
   })
 
-  it('2. 중립 전개는 0.6~1.5초에 리미터에 닿고 12,500을 넘지 않는다', () => {
+  // 서브스텝이 제 몫을 하는지 보려면 프레임 길이를 바꿔가며 같은 것을 물어야 한다.
+  // 0.1초는 RideControls가 허용하는 최대 프레임(MAX_DT)이다.
+  it.each([1 / 120, 1 / 30, 0.1])('2. 중립 전개는 0.6~1.5초에 리미터에 닿고 12,500을 넘지 않는다 (dt=%f)', (dt) => {
     let s = base()
     let reached = 0
     let peak = 0
-    for (let t = 0; t < 3; t += 1 / 120) {
-      s = stepRide(s, wot, 1 / 120)
+    for (let t = 0; t < 3; t += dt) {
+      s = stepRide(s, wot, dt)
       peak = Math.max(peak, s.rpm)
-      if (!reached && s.rpm >= MAX_RPM) reached = t + 1 / 120
+      if (!reached && s.rpm >= MAX_RPM) reached = t + dt
     }
     expect(reached).toBeGreaterThan(0.6)
     expect(reached).toBeLessThan(1.5)
@@ -148,6 +155,30 @@ describe('구동계 물리 v2', () => {
     const s = run(base({ rpm: 0, gear: 1, clutch: 0 }), { ...idle, clutchKey: true }, 1.5)
     expect(s.stalled).toBe(false)
     expect(s.rpm).toBeGreaterThan(IDLE_RPM - 60)
+  })
+
+  it('직결로 물리는 순간 차속이 튀지 않는다 — 붙는 쪽은 엔진이다', () => {
+    // 엔진을 동기에서 ±9.9 rad/s(직결 판정 문턱 10 바로 아래) 어긋나게 두고 클러치를 놓는다.
+    // 차체를 엔진 축으로 환산한 관성이 J_E의 17배쯤이라, 차속은 동기로 시작한 경우와 같아야 한다.
+    const sync6 = (speed: number) => (speed / REAR_TIRE_R_M) * gearRatio(6)
+    const after = (offset: number) => {
+      const s = base({ gear: 6, speed: 50, clutch: 0, rpm: (sync6(50) + offset) * (60 / (2 * Math.PI)) })
+      return run(s, idle, 0.05).speed
+    }
+    const level = after(0)
+    expect(Math.abs(after(9.9) - level)).toBeLessThan(0.02)
+    expect(Math.abs(after(-9.9) - level)).toBeLessThan(0.02)
+  })
+
+  it('제원 상수는 EX400G 값 그대로다', () => {
+    expect(GEAR_RATIOS).toEqual([0, 2.929, 2.056, 1.619, 1.333, 1.154, 1.037])
+    expect(PRIMARY).toBe(2.219)
+    expect(FINAL).toBe(2.929)
+    expect(IDLE_RPM).toBe(1300)
+    expect(MAX_RPM).toBe(12000)
+    expect(REAR_TIRE_R_M).toBe(0.306)
+    expect(gearRatio(0)).toBe(Infinity)
+    expect(gearRatio(6)).toBeCloseTo(6.74, 2)
   })
 
   it('바퀴 회전은 차속에서 파생된다', () => {
