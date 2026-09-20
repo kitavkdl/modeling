@@ -58,6 +58,8 @@ export function Throttle() {
       window.removeEventListener('pointercancel', upHandler)
       if (startY.current !== null) release()
       ride.throttleMouse = 0
+      // 호버만 한 채로 사라져도 onPointerOut이 오지 않으므로 커서를 되돌린다
+      document.body.style.cursor = ''
     }
   }, [running, release])
 

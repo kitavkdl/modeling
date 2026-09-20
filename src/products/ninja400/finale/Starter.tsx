@@ -133,7 +133,9 @@ export function Starter() {
     // 빨간 점이 깜빡이면 경고등으로 읽힌다.
     if (l) {
       const pulse = 1 - LAMP_DEPTH * (0.5 - 0.5 * Math.cos(2 * Math.PI * LAMP_HZ * state.clock.elapsedTime))
-      l.intensity = armed ? LAMP_INTENSITY * pulse * (hover ? LAMP_HOVER : 1) : 0
+      // 거부(기어 물린 채 클러치 없이 시동)는 상자가 안 보이므로 램프를 빠르게 점멸시켜 알린다
+      const refuse = refusedFor.current > 0 ? (Math.sin((refusedFor.current / REFUSE_S) * Math.PI * 6) > 0 ? 1.6 : 0.2) : 1
+      l.intensity = armed ? LAMP_INTENSITY * pulse * (hover ? LAMP_HOVER : 1) * refuse : 0
     }
   })
 
