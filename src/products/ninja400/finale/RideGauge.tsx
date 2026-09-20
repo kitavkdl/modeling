@@ -17,8 +17,13 @@ const REDLINE = MAX_RPM
 const SWEEP = 240
 /** 숫자·표시등 폴링 간격 (ms) */
 const POLL_MS = 100
-/** 바늘 1차 평활 시정수 (초). 프레임마다 읽는 rpm의 떨림을 눌러 준다 */
-const NEEDLE_TAU = 0.08
+/**
+ * 바늘 1차 평활 시정수 (초). 프레임마다 읽는 rpm의 떨림을 눌러 준다.
+ * 0.08초는 리미터 연료 컷의 출렁임(물리 11,690~12,010 = 320 rpm)을 121 rpm까지 깎아서
+ * 눈금 위에서 바늘이 거의 멈춘 것처럼 보였다. 0.05초면 170 rpm이 남아 3° 남짓 떨린다 —
+ * 실차의 리미터가 바늘을 흔드는 그 모습이다. (측정: .superpowers/sdd/round-4)
+ */
+const NEEDLE_TAU = 0.05
 /** 프레임이 길어도 이만큼까지만 적분한다 (초) — 탭 전환 복귀에 바늘이 튀지 않게 */
 const NEEDLE_MAX_DT = 0.1
 
@@ -45,6 +50,21 @@ function point(k: number, radius: number): [number, number] {
 
 const f2 = (v: number) => Math.round(v * 100) / 100
 
+/**
+ * 속도 표시의 히스테리시스 폭 (km/h). 0.5의 경계에 걸친 차속은 반올림만 하면 0과 1을
+ * 100 ms마다 오갔다 — 정지 직전과 반클러치 미속에서 숫자가 계속 떨렸다.
+ */
+const SPEED_DEADBAND = 0.3
+
+/**
+ * 표시용 정수 속도. 이전에 보여 준 값에서 (0.5 + 폭/2) 넘게 벗어날 때만 갱신한다 —
+ * 0 → 1은 0.65 km/h를 넘겨야 하고, 1 → 0은 0.35 km/h 아래로 내려가야 한다.
+ */
+export function displaySpeed(kmh: number, prev: number): number {
+  if (!Number.isFinite(kmh)) return prev
+  return Math.abs(kmh - prev) < 0.5 + SPEED_DEADBAND / 2 ? prev : Math.round(kmh)
+}
+
 /** 레드존 시작 눈금(×1000 rpm) — 리미터에서 파생한다 */
 const REDLINE_K = REDLINE / 1000
 
@@ -66,26 +86,40 @@ interface Snap {
   clutch: number
   brake: number
   stalled: boolean
+  /** 스타터가 크랭킹 중인가 — 이때 회전계는 300 언저리를 가리킨다 */
+  cranking: boolean
+  /** 클러치를 안 잡고 변속을 시도했다 */
+  clutchWarn: boolean
 }
 
-const read = (): Snap => ({
-  speed: Math.round(speedKmh(ride.speed)),
+const read = (prevSpeed: number): Snap => ({
+  speed: displaySpeed(speedKmh(ride.speed), prevSpeed),
   rpm: Math.round(ride.rpm),
   gear: ride.gear,
   clutch: ride.clutch,
   brake: ride.brake,
   stalled: ride.stalled,
+  cranking: ride.crankFor > 0,
+  clutchWarn: ride.clutchWarn > 0,
 })
 
 export function RideGauge() {
   const running = useAssembly((s) => s.phase === 'running')
-  const [snap, setSnap] = useState<Snap>(read)
+  const [snap, setSnap] = useState<Snap>(() => read(0))
   const needle = useRef<SVGGElement>(null)
 
   useEffect(() => {
     if (!running) return
-    setSnap(read())
-    const id = setInterval(() => setSnap(read()), POLL_MS)
+    // 히스테리시스가 붙었으므로 직전에 보여 준 값을 넘겨 준다
+    let shown = 0
+    const poll = () =>
+      setSnap(() => {
+        const next = read(shown)
+        shown = next.speed
+        return next
+      })
+    poll()
+    const id = setInterval(poll, POLL_MS)
     return () => clearInterval(id)
   }, [running])
 
@@ -103,8 +137,10 @@ export function RideGauge() {
       // 영영 NaN이라 rotate(NaNdeg)가 조용히 무시되면서 바늘이 마지막 각도에 얼어붙는다.
       const dt = Math.min(NEEDLE_MAX_DT, Math.max(0, (now - last) / 1000))
       last = now
-      // 시동이 꺼졌으면 숫자와 같은 0을 본다 — 바늘만 다른 값을 가리키는 일이 없도록
-      const target = ride.stalled || !Number.isFinite(ride.rpm) ? 0 : ride.rpm
+      // 숫자와 같은 값을 본다 — 바늘만 다른 값을 가리키는 일이 없도록.
+      // 꺼진 엔진의 rpm은 rideModel이 STALL_TAU로 0까지 내려 주므로 여기서 눌러 둘 것이 없다:
+      // 0으로 못 박아 두던 때는 시동이 꺼지는 순간 바늘이 한 프레임에 바닥으로 처박혔다.
+      const target = Number.isFinite(ride.rpm) ? ride.rpm : 0
       shown += (target - shown) * (1 - Math.exp(-dt / NEEDLE_TAU))
       if (!Number.isFinite(shown)) shown = target
       const el = needle.current
@@ -169,10 +205,12 @@ export function RideGauge() {
         </text>
       </svg>
       <div className="gauge-lamps">
-        <span className={snap.clutch >= CLUTCH_ENGAGED ? 'on' : undefined}>CLUTCH</span>
+        <span className={snap.clutchWarn ? 'warn' : snap.clutch >= CLUTCH_ENGAGED ? 'on' : undefined}>CLUTCH</span>
         <span className={snap.brake > 0.3 ? 'on' : undefined}>BRAKE</span>
       </div>
-      {snap.stalled ? (
+      {snap.cranking ? (
+        <div className="gauge-note">시동 거는 중…</div>
+      ) : snap.stalled ? (
         <div className="gauge-note">
           시동 꺼짐 — {snap.gear !== 0 && snap.clutch < CLUTCH_ENGAGED ? '클러치 잡고 시동' : '시동 버튼'}
         </div>

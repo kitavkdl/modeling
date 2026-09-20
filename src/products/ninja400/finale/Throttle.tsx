@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import type * as THREE from 'three'
-import { useAssembly, useMaterials } from '../../../engine/context'
+import { useAssembly, useMaterials, useProduct } from '../../../engine/context'
+import { isAssemblyHidden } from '../../../engine/store'
 import { clamp01 } from '../../../engine/easing'
 import { cancelCameraTween, setControlsEnabled } from '../../../engine/scene/controlsRef'
 import { MM } from '../../../engine/types'
@@ -22,8 +23,12 @@ const DRAG_RANGE_PX = 200
 const MAX_TWIST = (60 * Math.PI) / 180
 
 export function Throttle() {
+  const product = useProduct()
   const phase = useAssembly((s) => s.phase)
   const running = phase === 'running'
+  // 실물 모델(ZX-6R)이 서 있으면 그 그립이 이미 있다 — 절차 슬리브·리브를 얹으면 실물 위에
+  // 조잡한 원통 두 개가 덧씌워진다(사용자 스크린샷). 잡는 영역과 비틀림 상태만 남긴다.
+  const realModel = useAssembly((s) => isAssemblyHidden(product, s))
   const materials = useMaterials()
   const grip = useRef<THREE.Group>(null)
   const startY = useRef<number | null>(null)
@@ -78,13 +83,17 @@ export function Throttle() {
   return (
     <group position={[GRIP[0] * MM, GRIP[1] * MM, GRIP[2] * MM]}>
       <group ref={grip}>
-        <mesh material={rubber} rotation={[Math.PI / 2, 0, 0]} castShadow>
-          <cylinderGeometry args={[GRIP_R * MM, GRIP_R * MM, SLEEVE_LEN * MM, 16]} />
-        </mesh>
-        {/* 비틀림이 보이도록 얹은 리브 */}
-        <mesh material={rubber} position={[0, (GRIP_R + 1) * MM, 0]} castShadow>
-          <boxGeometry args={[5 * MM, 4 * MM, (SLEEVE_LEN - 10) * MM]} />
-        </mesh>
+        {realModel ? null : (
+          <>
+            <mesh material={rubber} rotation={[Math.PI / 2, 0, 0]} castShadow>
+              <cylinderGeometry args={[GRIP_R * MM, GRIP_R * MM, SLEEVE_LEN * MM, 16]} />
+            </mesh>
+            {/* 비틀림이 보이도록 얹은 리브 */}
+            <mesh material={rubber} position={[0, (GRIP_R + 1) * MM, 0]} castShadow>
+              <boxGeometry args={[5 * MM, 4 * MM, (SLEEVE_LEN - 10) * MM]} />
+            </mesh>
+          </>
+        )}
       </group>
       {/* 잡기 영역 */}
       <mesh
