@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CRANK_RPM,
+  CRANK_S,
   FINAL,
   GEAR_RATIOS,
   IDLE_RPM,
@@ -33,6 +35,8 @@ const base = (o: Partial<RideSim> = {}): RideSim => ({
   lowRpmFor: 0,
   fuelCut: false,
   lean: 0,
+  lurch: 0,
+  crankFor: 0,
   ...o,
 })
 
@@ -214,7 +218,9 @@ describe('구동계 물리 v2', () => {
     expect(at).toBeGreaterThan(0)
     expect(at).toBeLessThan(9)
     expect(s.stalled).toBe(true)
-    expect(s.rpm).toBe(0)
+    // 꺼진 그 프레임에 바늘이 0으로 처박히지는 않는다 — 크랭크가 STALL_TAU로 멎는다 (아래 38번)
+    expect(s.rpm).toBeLessThan(1200)
+    expect(run(s, idle, 0.6).rpm).toBe(0)
   })
 
   it('12. 2단 40 km/h에서 브레이크를 잡으면 클러치를 안 잡은 채로 3초 안에 꺼진다', () => {
@@ -249,7 +255,8 @@ describe('구동계 물리 v2', () => {
     // 실측 3.20초 → 2.33초. 남은 시간은 1,668 rpm에서 1,200까지 러깅으로 내려가는 데 쓰인다
     expect(at).toBeGreaterThan(0)
     expect(at).toBeLessThan(2.6)
-    expect(s.rpm).toBe(0)
+    expect(s.rpm).toBeLessThan(1200)
+    expect(run(s, idle, 0.6).rpm).toBe(0)
   })
 
   it('15. 러깅이어도 스로틀을 열고 있으면 죽지 않는다', () => {
@@ -281,12 +288,17 @@ describe('구동계 물리 v2', () => {
       { ...idle, brakeKey: true },
       { ...idle, throttleMouse: 1 },
     ]
+    // 스핀다운(STALL_TAU)이 끝난 뒤로는 무엇을 눌러도 0에서 움직이지 않는다
+    let peak = 0
     for (let i = 0; i < 120 * 3; i++) {
       if (i % 40 === 0) s = { ...s, gear: (s.gear + 1) % 7 }
       s = stepRide(s, pokes[i % pokes.length], 1 / 120)
       expect(s.stalled).toBe(true)
-      expect(s.rpm).toBe(0)
+      if (i < 120 * 0.6) peak = Math.max(peak, s.rpm)
+      else expect(s.rpm).toBe(0)
     }
+    // 스핀다운 구간에도 회전이 되살아나지는 않는다 — 내려가기만 한다
+    expect(peak).toBeLessThan(1200)
   })
 
   it('18. 스톨 직후 프레임이 길어도(0.1초) rpm은 0이고 NaN이 되지 않는다', () => {
@@ -294,7 +306,9 @@ describe('구동계 물리 v2', () => {
     for (let i = 0; i < 60; i++) {
       s = stepRide(s, wot, 0.1)
       expect(Number.isFinite(s.rpm)).toBe(true)
-      expect(s.rpm).toBe(0)
+      // 1,783 rpm(3 m/s의 1단 동기)에서 STALL_TAU로 내려오느라 0.5초까지는 0이 아니다.
+      if (i >= 5) expect(s.rpm).toBe(0)
+      else expect(s.rpm).toBeLessThan(syncRpm(1, 3))
     }
   })
 
@@ -599,6 +613,234 @@ describe('구동계 물리 v2', () => {
       expect(s.rpm).toBeGreaterThan(IDLE_RPM)
       expect(s.rpm).toBeLessThan(MAX_RPM)
     }
+  })
+
+  // --- 피드백 5회차: 상태 전환 (실주행 점검) -----------------------------------
+
+  it('38. N → 1단 클러치 덤프(스로틀 0·정지): 몇 cm 튀어나가고 0.5초 안에 회전이 멎는다', () => {
+    // 고치기 전: stalled가 서는 프레임(0.09초)에 rpm을 0으로 눌러서 바늘이 한 프레임에
+    // 바닥으로 처박혔다 — "꺼졌다"가 아니라 "사라졌다". 실차는 크랭크가 관성으로 더 돈다.
+    let s = base({ gear: 1, clutch: 1, rpm: IDLE_RPM })
+    let stallAt = -1
+    let zeroAt = -1
+    let peakSpeed = 0
+    for (let i = 0; i < 120 * 2; i++) {
+      s = stepRide(s, idle, 1 / 120)
+      const t = (i + 1) / 120
+      if (stallAt < 0 && s.stalled) stallAt = t
+      if (zeroAt < 0 && s.rpm === 0) zeroAt = t
+      peakSpeed = Math.max(peakSpeed, s.speed)
+    }
+    expect(stallAt).toBeGreaterThan(0)
+    expect(stallAt).toBeLessThan(0.2)
+    // 연소가 끊긴 뒤 크랭크가 멎기까지 — 0.3~0.5초 안이다
+    expect(zeroAt).toBeGreaterThan(0.3)
+    expect(zeroAt).toBeLessThan(0.5)
+    // 앞으로 한 번 튀어나간다: 몇 cm — 미터 단위로 기어가지도, 제자리에 얼어붙지도 않는다
+    expect(s.distance).toBeGreaterThan(0.03)
+    expect(s.distance).toBeLessThan(0.4)
+    expect(peakSpeed).toBeGreaterThan(0.1)
+    expect(s.speed).toBe(0)
+  })
+
+  it('39. 클러치 덤프의 반동이 lurch로 나온다 — 가속은 +, 제동은 −', () => {
+    let s = base({ gear: 1, clutch: 1, rpm: IDLE_RPM })
+    let peak = 0
+    for (let i = 0; i < 120; i++) {
+      s = stepRide(s, idle, 1 / 120)
+      peak = Math.max(peak, s.lurch)
+    }
+    // 정지에서 0.3 m/s대로 튀어나가는 한 번의 끄덕임
+    expect(peak).toBeGreaterThan(1)
+    expect(peak).toBeLessThan(11)
+    // 급제동은 음수 — 앞브레이크 0.88 g
+    let b = base({ gear: 0, speed: 25, rpm: IDLE_RPM })
+    let dip = 0
+    for (let i = 0; i < 120; i++) {
+      b = stepRide(b, { ...idle, brakeKey: true }, 1 / 120)
+      dip = Math.min(dip, b.lurch)
+    }
+    expect(dip).toBeLessThan(-6)
+    expect(dip).toBeGreaterThan(-12)
+    // 가만히 서 있으면 0
+    const still = run(base({ gear: 0 }), idle, 1)
+    expect(Math.abs(still.lurch)).toBeLessThan(1e-6)
+  })
+
+  it('40. 재시동은 0.6초 크랭킹을 거친다 — 300 rpm으로 돌다가 아이들로 붙는다', () => {
+    // 고치기 전: 거버너가 한 프레임에 아이들까지 끌어올려서 버튼을 누르는 즉시 엔진이 생겼다.
+    let s = base({ gear: 0, rpm: 0, stalled: false, crankFor: CRANK_S })
+    const at = (t: number) => Math.round(t * 120)
+    const rpms: number[] = []
+    for (let i = 0; i < 120 * 1.5; i++) {
+      s = stepRide(s, idle, 1 / 120)
+      rpms.push(s.rpm)
+    }
+    // 크랭킹 구간(0.3~0.6초)은 CRANK_RPM 언저리에 머문다
+    expect(rpms[at(0.3)]).toBeGreaterThan(CRANK_RPM * 0.8)
+    expect(rpms[at(0.3)]).toBeLessThan(CRANK_RPM * 1.1)
+    expect(rpms[at(0.55)]).toBeLessThan(CRANK_RPM * 1.1)
+    // 크랭킹이 끝나면 불이 붙어 아이들로 올라간다
+    expect(rpms[at(1.2)]).toBeGreaterThan(IDLE_RPM - 30)
+    expect(rpms[at(1.2)]).toBeLessThan(IDLE_RPM + 30)
+    expect(s.crankFor).toBe(0)
+    expect(s.stalled).toBe(false)
+  })
+
+  it('41. 크랭킹 동안에는 스로틀이 듣지 않고 스톨 판정도 꺼진다', () => {
+    // 전개로 눌러도 크랭크는 CRANK_RPM을 넘지 않는다 — 연소가 없으니 당연하다
+    let s = base({ gear: 0, rpm: 0, crankFor: CRANK_S })
+    let peak = 0
+    for (let i = 0; i < 120 * 0.6; i++) {
+      s = stepRide(s, wot, 1 / 120)
+      peak = Math.max(peak, s.rpm)
+    }
+    expect(peak).toBeLessThan(CRANK_RPM * 1.1)
+    // 기어를 물고 클러치를 놓은 채 크랭킹해도 그 0.6초 동안은 죽지 않는다
+    let g = base({ gear: 1, clutch: 0, rpm: 0, crankFor: CRANK_S })
+    for (let i = 0; i < 120 * 0.55; i++) g = stepRide(g, idle, 1 / 120)
+    expect(g.stalled).toBe(false)
+  })
+
+  it('42. 구르는 중에 클러치를 잡고 재시동해도 크랭킹을 거쳐 아이들로 붙는다', () => {
+    let s = base({ gear: 2, speed: 8, clutch: 1, rpm: 0, crankFor: CRANK_S })
+    const held: RideInputs = { ...idle, clutchKey: true }
+    for (let i = 0; i < 120 * 0.5; i++) s = stepRide(s, held, 1 / 120)
+    expect(s.rpm).toBeLessThan(CRANK_RPM * 1.1)
+    // 크랭킹 동안 차속은 스타터가 아니라 항력만 먹는다 — 거의 그대로다
+    expect(s.speed).toBeGreaterThan(7.7)
+    for (let i = 0; i < 120 * 1; i++) s = stepRide(s, held, 1 / 120)
+    expect(s.stalled).toBe(false)
+    expect(Math.abs(s.rpm - IDLE_RPM)).toBeLessThan(40)
+  })
+
+  it('43. 선 채로 앞브레이크를 잡고 있으면 클러치를 놓아도 기어 나가지 않는다', () => {
+    // 고치기 전: res가 speed > 0일 때만 제동을 담아서, 서 있는 차는 브레이크를 꽉 잡아도
+    // 반클러치 구동력을 그대로 받아 스멀스멀 굴러갔다. 정지 마찰이 먼저 버텨야 한다.
+    const braked: RideInputs = { ...idle, brakeKey: true }
+    let s = base({ gear: 1, clutch: 1, rpm: IDLE_RPM, brake: 1 })
+    for (let i = 0; i < 120 * 2; i++) s = stepRide(s, braked, 1 / 120)
+    // 클러치 용량이 순간적으로 앞브레이크를 넘기는 스텝이 있어 완전히 0은 아니지만 1 mm 미만이다
+    expect(s.distance).toBeLessThan(0.002)
+    expect(s.speed).toBe(0)
+    // 브레이크를 놓으면 그때는 튀어나간다 — 붙잡는 것이 브레이크임을 확인
+    let free = base({ gear: 1, clutch: 1, rpm: IDLE_RPM })
+    for (let i = 0; i < 120 * 2; i++) free = stepRide(free, idle, 1 / 120)
+    expect(free.distance).toBeGreaterThan(0.05)
+  })
+
+  it('44. 브레이크는 정지한 차를 뒤로 밀지 않는다', () => {
+    const s = run(base({ gear: 0, speed: 0 }), { ...idle, brakeKey: true }, 3)
+    expect(s.speed).toBe(0)
+    expect(s.distance).toBe(0)
+  })
+
+  it('45. 기울기 캡은 차속에 비례한다 — 보행 속도에서 38°는 못 눕는다', () => {
+    const leanR: RideInputs = { ...idle, leanRightKey: true, clutchKey: true }
+    const deg = (rad: number) => (rad * 180) / Math.PI
+    /** 차속을 붙잡아 둔 채(중립·클러치) 4초 동안 눕힌다 */
+    const holdLean = (kmh: number) => {
+      let s = base({ gear: 0, speed: kmh / 3.6, rpm: IDLE_RPM, clutch: 1 })
+      for (let i = 0; i < 120 * 4; i++) {
+        s = stepRide(s, leanR, 1 / 120)
+        s = { ...s, speed: kmh / 3.6 } // 항력으로 느려지지 않게 고정해서 캡만 본다
+      }
+      return deg(s.lean)
+    }
+    // 5 km/h(1.39 m/s)는 캡이 38° × 1.39/8 = 6.6°
+    expect(holdLean(5)).toBeGreaterThan(5)
+    expect(holdLean(5)).toBeLessThan(8)
+    // 29 km/h(8.06 m/s) 위로는 캡이 다 열린다
+    expect(holdLean(29)).toBeGreaterThan(37.5)
+    expect(holdLean(60)).toBeLessThan(deg(LEAN_MAX) + 0.01)
+    // 캡은 단조 증가한다
+    expect(holdLean(10)).toBeGreaterThan(holdLean(5))
+    expect(holdLean(20)).toBeGreaterThan(holdLean(10))
+  })
+
+  it('46. 눕힌 채 속도가 떨어지면 캡이 같이 닫혀 차가 일어선다', () => {
+    const leanR: RideInputs = { ...idle, leanRightKey: true }
+    let s = base({ gear: 0, speed: 20, rpm: IDLE_RPM, clutch: 1 })
+    for (let i = 0; i < 120 * 3; i++) s = stepRide(s, { ...leanR, clutchKey: true }, 1 / 120)
+    const leaned = s.lean
+    expect(leaned).toBeGreaterThan(0.6)
+    // 계속 누른 채 급제동 — 속도가 떨어지는 만큼 캡이 닫혀야 한다
+    for (let i = 0; i < 120 * 3; i++) s = stepRide(s, { ...leanR, clutchKey: true, brakeKey: true }, 1 / 120)
+    expect(s.speed).toBeLessThan(4)
+    expect(s.lean).toBeLessThan(leaned)
+    expect(s.lean).toBeLessThanOrEqual(LEAN_MAX * Math.min(1, s.speed / 8) + 1e-9)
+  })
+
+  it('47. N → 1단을 60 km/h에서 넣고 클러치를 놓아도 계기 눈금(13,000) 안이다', () => {
+    // 동기 회전은 9,900 rpm. 뒷바퀴 접지 한계(REAR_BRAKE_N) 안에서만 끌려 올라가므로
+    // 리미터까지 가지 않고, 차는 뒤가 미끄러지듯 0.4 g로 느려진다.
+    const v0 = 60 / 3.6
+    expect(syncRpm(1, v0)).toBeGreaterThan(9000)
+    let s = base({ gear: 1, speed: v0, rpm: IDLE_RPM })
+    let peak = 0
+    for (let i = 0; i < 120 * 2; i++) {
+      s = stepRide(s, idle, 1 / 120)
+      peak = Math.max(peak, s.rpm)
+      expect(s.rpm).toBeLessThanOrEqual(OVERREV_MAX)
+    }
+    expect(peak).toBeGreaterThan(4000)
+    expect(s.speed).toBeLessThan(v0)
+    // 0.4 g 언저리 — 1 g로 서지 않는다
+    const decel = (v0 - s.speed) / 2
+    expect(decel).toBeGreaterThan(2)
+    expect(decel).toBeLessThan(6)
+  })
+
+  it('48. dt = 0.1로 기어·입력을 마구 바꿔도 값이 깨지지 않는다', () => {
+    const pokes: RideInputs[] = [
+      idle,
+      wot,
+      { ...idle, clutchKey: true },
+      { ...idle, brakeKey: true },
+      { ...wot, clutchKey: true },
+      { ...idle, leanLeftKey: true },
+      { ...idle, leanRightKey: true, brakeKey: true },
+    ]
+    for (const gear of [0, 1, 3, 6]) {
+      for (const speed of [0, 1, 10, 40]) {
+        let s = base({ gear, speed, rpm: gear === 0 ? IDLE_RPM : syncRpm(gear, speed) })
+        for (let i = 0; i < 120; i++) {
+          if (i % 17 === 0) s = { ...s, gear: (s.gear + 1) % 7 }
+          if (i % 51 === 0) s = { ...s, crankFor: CRANK_S, stalled: false, running: true }
+          s = stepRide(s, pokes[i % pokes.length], 0.1)
+          for (const v of [s.rpm, s.speed, s.distance, s.lean, s.lurch, s.crankFor, s.clutch, s.brake, s.throttle]) {
+            expect(Number.isFinite(v)).toBe(true)
+          }
+          expect(s.speed).toBeGreaterThanOrEqual(0)
+          expect(s.rpm).toBeGreaterThanOrEqual(0)
+          expect(s.rpm).toBeLessThanOrEqual(OVERREV_MAX + 1e-6)
+          expect(Math.abs(s.lean)).toBeLessThanOrEqual(LEAN_MAX + 1e-9)
+          expect(s.crankFor).toBeGreaterThanOrEqual(0)
+        }
+      }
+    }
+  })
+
+  it('49. 스로틀은 키와 그립 중 큰 쪽이 이긴다 — 한쪽을 놓아도 다른 쪽 값이 남는다', () => {
+    // 그립을 60%까지 끌어 둔 채 ↑를 눌렀다 놓는다
+    let s = base({ gear: 0, rpm: IDLE_RPM })
+    s = run(s, { ...idle, throttleMouse: 0.6 }, 1)
+    expect(s.throttle).toBeCloseTo(0.6, 3)
+    s = run(s, { ...idle, throttleMouse: 0.6, throttleKey: true }, 1)
+    expect(s.throttle).toBe(1)
+    // ↑를 놓아도 그립은 그대로 60%로 돌아온다 (닫히는 시정수 0.25초라 1초 뒤 0.607)
+    s = run(s, { ...idle, throttleMouse: 0.6 }, 1)
+    expect(s.throttle).toBeLessThan(0.62)
+    expect(s.throttle).toBeGreaterThan(0.6)
+    s = run(s, { ...idle, throttleMouse: 0.6 }, 1)
+    expect(s.throttle).toBeCloseTo(0.6, 3)
+    // 반대로 그립을 놓아도 ↑가 눌려 있으면 전개
+    s = run(s, { ...idle, throttleMouse: 0.6, throttleKey: true }, 1)
+    s = run(s, { ...idle, throttleKey: true }, 1)
+    expect(s.throttle).toBe(1)
+    // 둘 다 놓으면 완전히 닫힌다
+    s = run(s, idle, 2)
+    expect(s.throttle).toBe(0)
   })
 
   it('제원 상수는 EX400G 값 그대로다', () => {

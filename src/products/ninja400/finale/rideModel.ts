@@ -94,6 +94,25 @@ const STALL_GRIP = 0.5
 /** 약한 스톨을 보는 스로틀 문턱 (0~1). 스로틀을 열고 있으면 러깅이라도 죽이지 않는다 */
 const STALL_THROTTLE = 0.05
 /**
+ * 시동이 꺼진 뒤 크랭크가 관성으로 멎는 시정수 (초). 예전에는 stalled가 서는 프레임에 rpm을
+ * 그대로 0으로 눌렀다 — N에서 1단을 넣고 클러치를 놓으면 0.1초 만에 바늘이 바닥에 처박혀서
+ * "꺼졌다"가 아니라 "사라졌다"로 보였다. 실차는 연소가 끊긴 뒤에도 크랭크가 몇 바퀴 더 돈다.
+ * 0.1초면 1,250 rpm에서 30 rpm(=0 처리)까지 0.37초 — 클러치를 놓은 시점부터 0.5초 안에 멎는다.
+ */
+const STALL_TAU = 0.1
+/** 스타터가 크랭킹하는 시간 (초). 실차의 "끼릭끼릭" 한 박자 */
+export const CRANK_S = 0.6
+/** 크랭킹 회전 (rpm). 스타터 모터가 크랭크를 끌고 도는 속도 */
+export const CRANK_RPM = 300
+/** 크랭킹 회전에 붙는 시정수 (초) */
+const CRANK_TAU = 0.12
+/**
+ * 종방향 가속도를 평활하는 시정수 (초). 프레임마다의 (Δv/Δt)는 클러치가 물리는 순간
+ * 톱니처럼 튀어서 차체 피치 연출이 떨린다. 0.08초면 클러치 덤프의 한 번 끄덕임은 살아남고
+ * 프레임 잡음은 눌린다.
+ */
+const LURCH_TAU = 0.08
+/**
  * 엔진 브레이크 기본 토크 (Nm). 관성이 0.03 kg·m²로 작아서 3 + 2.5·rpm/1000이면
  * 클러치를 잡은 0.3~0.5초짜리 변속 사이에 rpm이 아이들까지 곤두박질쳤다 — 그래서 낮췄다.
  */
@@ -157,7 +176,7 @@ const BRAKE_TAU = 0.1
 const THROTTLE_GAMMA = 0.6
 /** 스로틀은 목표까지 이만큼 남으면 목표에 붙인다 — 다 감은 그립은 전개, 놓은 그립은 완전히 닫힘 */
 const THROTTLE_SNAP = 0.004
-/** 시동을 걸지 않은(running=false) 엔진의 회전이 0으로 내려가는 시정수 (초). 스톨은 rpm을 바로 0으로 둔다 */
+/** 시동을 걸지 않은(running=false) 엔진의 회전이 0으로 내려가는 시정수 (초). 스톨은 더 빠른 STALL_TAU로 멎는다 */
 const OFF_TAU = 0.2
 /** 물림/직결 전환이 프레임 길이에 흔들리지 않도록 내부에서 이만큼씩 쪼개 적분한다 (초) */
 const SUB_DT = 1 / 240
@@ -170,12 +189,21 @@ const LEAN_IN_TAU = 0.35
 const LEAN_OUT_TAU = 0.4
 /** 이 차속 아래에서는 목표 뱅크각을 0으로 둔다 (m/s) — 선 채로는 못 기운다 */
 const LEAN_MIN_SPEED = 1
+/**
+ * 뱅크각이 캡(LEAN_MAX)까지 열리는 차속 (m/s = 28.8 km/h). 그 아래에서는 캡이 비례해서 줄어든다.
+ * 38°는 원심력이 체중을 받쳐 줄 때만 서는 각이다 — 보행 속도(5 km/h = 1.4 m/s)에서 38°로 눕히면
+ * 실차는 그대로 넘어진다. 선회 반경으로 봐도 g·tan38°/v² 가 1.4 m/s에서 4 m 반경이라 성립하지 않는다.
+ * 여기서 잘라 두면 5 km/h의 캡이 6.7°, 15 km/h가 20°, 29 km/h 위가 38°다.
+ */
+const LEAN_FULL_SPEED = 8
 /** 중력가속도 (m/s²) */
 const G = 9.81
 
 const RPM_PER_RAD_S = 60 / (2 * Math.PI)
 /** 과회전 상한을 각속도로 (rad/s) */
 const OMEGA_OVERREV = OVERREV_MAX / RPM_PER_RAD_S
+/** 크랭킹 회전을 각속도로 (rad/s) */
+const OMEGA_CRANK = CRANK_RPM / RPM_PER_RAD_S
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
 
 export interface RideSim {
@@ -196,6 +224,13 @@ export interface RideSim {
   fuelCut: boolean
   /** 뱅크각 (rad). + = 오른쪽 · − = 왼쪽 */
   lean: number
+  /**
+   * 평활한 종방향 가속도 (m/s²). + = 가속 · − = 감속.
+   * 차체 피치 연출(RideRig)이 이 값만 읽어서 앞을 들었다 내린다 — 물리에는 되먹이지 않는다.
+   */
+  lurch: number
+  /** 스타터가 크랭킹하는 남은 시간 (초). > 0이면 연소 없이 CRANK_RPM으로 돌고 스톨 판정이 꺼진다 */
+  crankFor: number
 }
 
 export interface RideInputs {
@@ -301,11 +336,16 @@ export function stepRide(s: RideSim, input: RideInputs, dt: number): RideSim {
   let stalled = s.stalled
   let lowRpmFor = s.lowRpmFor
   let fuelCut = s.fuelCut
+  // 크랭킹은 "시동이 걸려 있다고 보되 아직 연소는 없다"는 상태다. 스타터(Starter)만 세운다.
+  // 꺼져 있거나(running=false) 이미 죽은(stalled) 엔진에 남아 있던 타이머는 무시한다 —
+  // 그래야 크랭킹과 스핀다운이 같은 프레임에서 서로를 밀지 않는다.
+  let crankLeft = s.running && !s.stalled && Number.isFinite(s.crankFor) && s.crankFor > 0 ? s.crankFor : 0
 
   const steps = Math.max(1, Math.ceil(dt / SUB_DT))
   const h = dt / steps
   for (let i = 0; i < steps; i++) {
-    const alive = s.running && !stalled
+    const cranking = crankLeft > 0
+    const alive = s.running && !stalled && !cranking
     const prevRpm = omega * RPM_PER_RAD_S
     // 리미터 연료 컷 — 실차의 소프트 컷처럼 히스테리시스를 둔다. 닿으면 끊고 LIMITER_BAND만큼
     // 떨어져야 다시 붙어서, 회전이 12,000 언저리에서 위아래로 튄다.
@@ -317,10 +357,15 @@ export function stepRide(s: RideSim, input: RideInputs, dt: number): RideSim {
 
     if (!alive || grip <= 0) {
       // 자유 — 엔진과 차체가 따로 논다
-      if (alive) {
+      if (cranking) {
+        // 스타터가 크랭크를 끌고 돈다. 연소가 없으니 스로틀도 듣지 않고 구동계로 나가는 힘도 없다 —
+        // 예전에는 재시동이 거버너를 타고 한 프레임에 아이들까지 튀어올라서 "끼릭" 하는 한 박자가 없었다.
+        omega = approach(omega, OMEGA_CRANK, CRANK_TAU, h)
+      } else if (alive) {
         omega += (engineTorque(omega * RPM_PER_RAD_S, throttle, grip, fuelCut) / J_E) * h
         if (omega > OMEGA_OVERREV) omega = OMEGA_OVERREV
-      } else if (grip > 0 && gear !== 0 && speed > 0) {
+      }
+      if (!alive && grip > 0 && gear !== 0 && speed > 0) {
         // 시동이 꺼진 엔진을 기어가 끌고 돈다 — 압축·마찰이 남아 브레이크처럼 걸린다.
         // 이게 없으면 꺼진 뒤에도 중립 타력과 똑같이 굴러가서 "엔진이 죽었다"는 감각이 없었다.
         const deadRpm = ((speed / r) * ratio) * RPM_PER_RAD_S
@@ -373,7 +418,12 @@ export function stepRide(s: RideSim, input: RideInputs, dt: number): RideSim {
         omega += ((torque - (force * r) / ratio) / J_E) * h
         if (omega < 0) omega = 0
         if (omega > OMEGA_OVERREV) omega = OMEGA_OVERREV
-        speed = Math.max(0, speed + ((force - res) / MASS) * h)
+        // 선 채로 브레이크를 잡고 있으면 정지 마찰이 먼저 버틴다. res는 speed > 0일 때만 제동을
+        // 담으므로, 서 있는 차는 반클러치로 밀어도 브레이크를 못 느끼고 스멀스멀 기어 나갔다
+        // (아이들 반클러치 500 N ≪ 앞브레이크 2,100 N — 실차는 꿈쩍도 하지 않는다).
+        // 구동력이 정지 마찰 용량을 넘을 때만 굴러가기 시작한다.
+        if (speed <= 0 && force > 0 && force <= brake * BRAKE_N) speed = 0
+        else speed = Math.max(0, speed + ((force - res) / MASS) * h)
       }
     }
 
@@ -398,27 +448,36 @@ export function stepRide(s: RideSim, input: RideInputs, dt: number): RideSim {
     } else {
       lowRpmFor = 0
     }
+    if (crankLeft > 0) crankLeft = crankLeft - h > 0 ? crankLeft - h : 0
   }
 
   let rpm = omega * RPM_PER_RAD_S
   if (!s.running || stalled) {
-    rpm = approach(rpm, 0, OFF_TAU, dt)
+    // 죽은 엔진은 꺼 둔 엔진보다 빨리 멎는다 — 연소가 끊긴 크랭크가 관성으로 도는 것뿐이다.
+    rpm = approach(rpm, 0, stalled ? STALL_TAU : OFF_TAU, dt)
     if (rpm < 30) rpm = 0
   }
   // 수치가 한 번이라도 깨지면 계기 바늘·사운드가 영영 NaN에 얼어붙는다 — 여기서 끊는다
   if (!Number.isFinite(rpm)) rpm = 0
 
   // 기울이기 — D가 왼쪽(−) · F가 오른쪽(+). 누르고 있는 동안 캡까지 자라고 놓으면 돌아온다.
+  // 캡 자체가 차속에 비례해서 열린다 (LEAN_FULL_SPEED) — 보행 속도에서 38°는 넘어지는 각이다.
   const leanDir = (input.leanRightKey ? 1 : 0) - (input.leanLeftKey ? 1 : 0)
-  const leanTarget = speed < LEAN_MIN_SPEED ? 0 : leanDir * LEAN_MAX
+  const leanCap = LEAN_MAX * Math.min(1, Math.max(0, speed) / LEAN_FULL_SPEED)
+  const leanTarget = speed < LEAN_MIN_SPEED ? 0 : leanDir * leanCap
   let lean = approach(s.lean, leanTarget, leanTarget === 0 ? LEAN_OUT_TAU : LEAN_IN_TAU, dt)
-  // 1차 응답은 목표를 넘지 않지만, 캡이 줄어드는 경우(감속으로 목표가 0이 됨)까지 잘라 둔다
-  if (lean > LEAN_MAX) lean = LEAN_MAX
-  else if (lean < -LEAN_MAX) lean = -LEAN_MAX
+  // 1차 응답은 목표를 넘지 않지만, 캡이 줄어드는 경우(감속하면 캡이 같이 닫힌다)까지 잘라 둔다
+  if (lean > leanCap) lean = leanCap
+  else if (lean < -leanCap) lean = -leanCap
+
+  // 종방향 가속도 — 연출 전용 파생값이다. 프레임의 Δv/Δt를 평활해서 내보낸다.
+  const accel = dt > 0 ? (speed - s.speed) / dt : 0
+  let lurch = approach(Number.isFinite(s.lurch) ? s.lurch : 0, Number.isFinite(accel) ? accel : 0, LURCH_TAU, dt)
+  if (!Number.isFinite(lurch)) lurch = 0
 
   return {
     ...s,
-    rpm: stalled ? 0 : rpm,
+    rpm,
     throttle,
     clutch,
     brake,
@@ -428,5 +487,7 @@ export function stepRide(s: RideSim, input: RideInputs, dt: number): RideSim {
     lowRpmFor,
     fuelCut: stalled || !s.running ? false : fuelCut,
     lean,
+    lurch,
+    crankFor: crankLeft,
   }
 }

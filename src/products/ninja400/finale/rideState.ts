@@ -20,6 +20,12 @@ export interface RideState extends RideSim {
   throttleMouse: number
   /** 변속 연출 타이머: 부호는 방향(1 성공 · -1 걸림), 크기는 1에서 0으로 줄어든다 */
   shiftKick: number
+  /**
+   * "클러치" 경고등이 켜져 있는 남은 시간 (초). 클러치를 안 잡고 변속을 시도하면 선다.
+   * 시프트 레버 킥(shiftKick, 0.15초)만으로는 계기를 보고 있던 사람이 왜 안 들어갔는지 모른다.
+   * 계기 폴링이 100 ms라 킥보다 길게 잡아야 한 번은 반드시 잡힌다.
+   */
+  clutchWarn: number
 }
 
 export const ride: RideState = {
@@ -37,7 +43,10 @@ export const ride: RideState = {
   fuelCut: false,
   /** 뱅크각 (rad, + = 오른쪽). 노면·차체 연출이 이 값을 읽는다 */
   lean: 0,
+  lurch: 0,
+  crankFor: 0,
   shiftKick: 0,
+  clutchWarn: 0,
 }
 
 export const rideInput: RideInput = {
@@ -70,7 +79,10 @@ export function resetRide(): void {
   ride.lowRpmFor = 0
   ride.fuelCut = false
   ride.lean = 0
+  ride.lurch = 0
+  ride.crankFor = 0
   ride.shiftKick = 0
+  ride.clutchWarn = 0
   rideInput.throttleKey = false
   rideInput.brakeKey = false
   rideInput.clutchKey = false
