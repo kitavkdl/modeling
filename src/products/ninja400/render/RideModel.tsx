@@ -212,3 +212,10 @@ class RideModelBoundary extends Component<{ store: AssemblyStore; children: Reac
     return this.state.failed ? null : this.props.children
   }
 }
+
+/** HUD 문구 (product.hudExtra): 실물 모델을 못 띄워 절차 조립체로 진행 중일 때만 뜬다 */
+export function RideModelNote() {
+  const failed = useAssembly(() => rideModelFailed())
+  if (!failed) return null
+  return <div className="refine-note">실물 모델을 불러오지 못해 조립 모델로 진행</div>
+}

@@ -9,7 +9,7 @@ import { EngineShake } from './render/EngineShake'
 import { Lamps } from './render/Lamps'
 import { Paintable } from './render/Paintable'
 import { refineDone, RefineNote } from './render/Refine'
-import { rideModelFailed, rideModelReady } from './render/RideModel'
+import { rideModelFailed, RideModelNote, rideModelReady } from './render/RideModel'
 import { RIDE_MODEL } from './render/rideLayout.generated'
 import { LeverPivot, ShiftLever, Spinner } from './render/RideParts'
 
@@ -23,6 +23,7 @@ function NinjaHud() {
   return (
     <>
       <RefineNote />
+      <RideModelNote />
       <RideGauge />
     </>
   )

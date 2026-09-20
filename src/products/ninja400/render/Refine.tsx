@@ -254,10 +254,11 @@ export function RefineSweep() {
   const x0 = sweepXUnits(refine.t)
   return (
     <group>
-      {/* 칼날 자리에 서는 얇고 밝은 판. 조명을 받지 않는 basic 재질이라 톤매핑도 끈다 */}
-      <mesh ref={blade} position={[x0, (BLADE_H_MM / 2) * MM, 0]}>
+      {/* 칼날 자리에 서는 얇은 빛의 판. 불투명 상자면 3/4 시점에서 1 m 흰 벽으로 보이므로
+          가산 합성의 반투명 판으로 두어 '지나가는 빛'으로 읽히게 한다 (깊이는 쓰지 않는다) */}
+      <mesh ref={blade} position={[x0, (BLADE_H_MM / 2) * MM, 0]} renderOrder={10}>
         <boxGeometry args={[BLADE_MM * MM, BLADE_H_MM * MM, BLADE_W_MM * MM]} />
-        <meshBasicMaterial color="#dfe6f2" toneMapped={false} />
+        <meshBasicMaterial color="#9fb4d6" toneMapped={false} transparent opacity={0.22} depthWrite={false} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} />
       </mesh>
       {/* 칼날을 따라다니는 약한 점광 — 지나가는 자리만 살짝 들어 올린다 */}
       <pointLight ref={lamp} position={[x0, (BLADE_H_MM / 2) * MM, 0]} intensity={24} distance={60} decay={2} color="#cfdcf0" />
