@@ -1,19 +1,54 @@
-// 엔진 사운드 v4 — 실녹음 루프(public/audio/ninja400/engine/)를 한 번에 하나만 재생한다.
+// 엔진 사운드 v5 — 실녹음 루프(public/audio/ninja400/engine/) 위에 합성 층 셋을 얹는다.
 // 뱅크는 rpm 사다리(1325~6495)로 잘라 둔 이음매 없는 모노 루프 + 시동·정지 원샷이고,
 // 각 칸의 rpm은 반올림하지 않은 실측값이다(bank.json, 소수 첫째 자리).
+//
 // 그래프:
-//   루프(활성) ─ gain ┐
-//   루프(교체 중) ─ gain ┴→ loopBus ─→ antiAlias(9k) ─→ tone(lowpass) ─→ toneGain ─→ master ─→ compressor ─→ destination
-//   start.ogg / stop.ogg 원샷 ──────────────────────────────────────────────────────→ master ┘
-// 매 tick(25 ms)마다 pickLoop로 칸 하나를 고르고, 그 소스의 playbackRate를 rpm/루프rpm으로
-// 끌고 간다. 칸이 바뀔 때만 새 소스를 걸고 0.25초 등파워 교차 페이드한 뒤 옛 소스를 끊는다.
-// v3는 이웃 두 칸을 늘 겹쳐 울렸는데, 뱅크 rpm이 10 단위로 반올림돼 있어 두 소스의 기본파가
-// 1%쯤 어긋났고 그게 초당 1회 부푸는 맥놀이("왕(쉬고)왕")가 됐다. 이제 겹치는 250 ms 동안에도
-// 두 소스가 같은 목표 rpm으로 울리고, 뱅크 rpm이 정밀하니 그 사이 맥놀이는 무시할 수준이다.
-// 최고 루프 위(6495~12000)는 그대로 피치업(최대 1.85배)하고, 비율에 상한을 두지 않는다.
+//   활성 칸 ┬ 보이스A ─ lvlA(±2 dB LFO 0.13 Hz) ┐
+//           └ 보이스B ─ lvlB(±2 dB LFO 0.17 Hz) ┤ slotGain ┐
+//   교체 중인 칸 (같은 모양) ─────────────────────────────┴→ loopMix
+//   loopMix → loopShelf(150 Hz, 7000 rpm 위로 +3 dB) ┐
+//   고회전 몸통 (정현파 6 + 공진 LPF + tanh) ────────┤
+//   흡기 그로울 (대역잡음 × 점화주파수 AM) ──────────┤
+//   감속 버블 (300 Hz 짧은 팝) ──────────────────────┴→ loopBus(시동·정지 페이드)
+//   loopBus → loadShelf(120 Hz, 부하 +1.5 dB) → antiAlias(9k, 피치업 1.4배 위에서 7k)
+//           → tone(lowpass, Q는 부하가 낮춘다) → toneGain → master → compressor → destination
+//   start.ogg / stop.ogg 원샷 ─────────────────────────────────────────→ master ┘
+//
+// 매 tick(25 ms)마다 pickLoop로 칸 하나를 고르고, 그 소스들의 playbackRate를 rpm/루프rpm으로
+// 끌고 간다. 칸이 바뀔 때만 새 칸을 걸고 0.25초 등파워 교차 페이드한 뒤 옛 칸을 끊는다.
+//
+// v4에서 고친 세 가지:
+//  1) 고회전이 얇았다 — 6495 rpm 위는 루프를 1.85배까지 피치업할 뿐이라 배음이 성기다.
+//     5500→8000 rpm에 걸쳐 합성 몸통을 섞고, 7000 rpm 위로는 루프에 저역 셸프를 준다.
+//  2) 스로틀에 반응이 없었다 — 톤 범위를 넓히고(−7 dB/1100 Hz ↔ 0 dB/7000 Hz), 열 때는 30 ms,
+//     닫을 때는 120 ms로 시정수를 달리하고, 흡기 그로울과 감속 버블을 붙였다.
+//  3) 같은 소리가 되풀이됐다 — 한 칸을 서로 40~60% 떨어진 지점에서 시작한 보이스 둘로 울린다.
+//     차이는 점화 주기의 정수배로 스냅해 기본파 위상을 맞춰 두고(voiceOffsets 참조),
+//     느린 레벨 LFO(0.13·0.17 Hz, ±2 dB)와 보이스 B의 ±0.15% playbackRate LFO(0.09 Hz)로
+//     주기성을 깬다. 루프 하나가 0.9~2초마다 똑같이 돌아오던 느낌이 사라진다.
+//
 // rpm은 바깥(주행 모델)에서 setRpm으로 들어온다.
 
 import { IDLE_RPM } from '../finale/rideModel'
+import {
+  antiAliasHz,
+  clamp01,
+  createBurbleLayer,
+  createHighLayer,
+  createIntakeLayer,
+  createNoiseBuffer,
+  dbToGain,
+  loopShelfDb,
+  LOOP_SHELF_HZ,
+  rpmSlope,
+  updateBurbleLayer,
+  updateHighLayer,
+  updateIntakeLayer,
+  type BurbleLayer,
+  type HighLayer,
+  type IntakeLayer,
+  type LayerState,
+} from './engineLayers'
 import { pickLoop, type Loop } from './pickLoop'
 
 /** 뱅크가 놓인 곳 (Vite가 public/ 그대로 복사한다) */
@@ -33,44 +68,70 @@ const BUS_DROP_S = 0.02
 const SUSPEND_PAD_S = 0.05
 /** 소스를 급히 거둘 때 지우는 시간 (초) — 정지·중복 교체 때만 쓴다 */
 const SLOT_FADE_S = 0.03
-/** 칸을 갈아탈 때 등파워 교차 페이드 (초). 이 동안만 두 소스가 겹친다 */
+/** 칸을 갈아탈 때 등파워 교차 페이드 (초). 이 동안만 두 칸이 겹친다 */
 const SWITCH_FADE_S = 0.25
 /** 교차 페이드 곡선을 그릴 점 개수 */
 const FADE_POINTS = 33
-/** 루프 버스 앤티에일리어싱 저역통과 (Hz, 2극). 뱅크 위로 1.6~1.9배 피치업할 때 생기는
- *  리샘플링 에일리어싱이 고역에서 거칠게 들리는 것을 부드럽게 덮는다 */
-const LOOP_LPF_HZ = 9000
-/** playbackRate·슬롯 게인 시정수(초)와 톤(lowpass·게인) 시정수(초) */
+/** playbackRate·슬롯 게인 시정수(초) */
 const RATE_TAU = 0.02
-const TONE_TAU = 0.05
-/** 머플러 저역통과 (Hz): 스로틀 0 → 1400, 1 → 6000 */
-const TONE_HZ_BASE = 1400
-const TONE_HZ_SPAN = 4600
-/** 톤 게인 (dB): 스로틀 0 → −5, 1 → 0, 부하 1이면 +3 */
-const TONE_DB_BASE = -5
-const TONE_DB_THROTTLE = 5
+/** 톤(lowpass·게인) 시정수 — 열 때는 빠르게, 닫을 때는 느리게 */
+const TONE_TAU_OPEN = 0.03
+const TONE_TAU_CLOSE = 0.12
+/** 머플러 저역통과 (Hz): 스로틀 0 → 1100, 1 → 7000 */
+const TONE_HZ_BASE = 1100
+const TONE_HZ_SPAN = 5900
+/** 톤 게인 (dB): 스로틀 0 → −7, 1 → 0, 부하 1이면 +3 */
+const TONE_DB_BASE = -7
+const TONE_DB_THROTTLE = 7
 const TONE_DB_LOAD = 3
+/** 톤 저역통과 Q: 기본 1.0, 부하 1이면 0.7 — 물린 기어에서는 공진을 죽여 둔탁하게 민다 */
+const TONE_Q_BASE = 1.0
+const TONE_Q_LOAD = 0.3
+/** 부하가 더하는 저역 셸프 (Hz, dB) */
+const LOAD_SHELF_HZ = 120
+const LOAD_SHELF_DB = 1.5
 /** blip(): 톤 게인 +4 dB, 8 ms 상승 · 40 ms 유지 · 60 ms 하강 */
 const BLIP_DB = 4
 const BLIP_ATTACK_S = 0.008
 const BLIP_HOLD_S = 0.04
 const BLIP_RELEASE_S = 0.06
-
-const clamp01 = (t: number) => (Number.isFinite(t) ? (t < 0 ? 0 : t > 1 ? 1 : t) : 0)
-const dbToGain = (db: number) => Math.pow(10, db / 20)
+/** 한 칸을 울리는 보이스 둘: 등파워 배분, 느린 레벨 LFO(선형 ±0.26배 = +2.0/−2.6 dB),
+ *  보이스 B의 rate LFO(±0.15%). 두 레벨 LFO는 주파수가 달라 몇 초 만에 서로 어긋난다 */
+const VOICE_GAIN = Math.SQRT1_2
+const VOICE_LFO_HZ = [0.13, 0.17]
+const VOICE_LFO_DB = 2
+const RATE_LFO_HZ = 0.09
+const RATE_LFO_DEPTH = 0.0015
+/** 두 보이스의 시작 지점 차이 (루프 길이 대비) — 40~60%, 점화 주기의 정수배로 스냅한다 */
+const VOICE_OFFSET_MIN = 0.4
+const VOICE_OFFSET_SPAN = 0.2
+/** d(rpm)/dt 지수평활 계수 — tick 하나의 잡음으로 버블이 깜빡이지 않게 */
+const DRPM_SMOOTH = 0.35
+/** 합성 층 파라미터 시정수 (초) */
+const LAYER_TAU = 0.03
 
 /** 회전수 정리 — 유한하지 않거나 0 이하(시동 꺼짐·스톨)면 0, 그때는 루프를 아예 내린다 */
 export function safeRpm(rpm: number): number {
   return Number.isFinite(rpm) && rpm > 0 ? rpm : 0
 }
 
-/** 스로틀·부하가 정하는 머플러 저역통과와 톤 게인(선형) */
-export function toneFor(throttle: number, load: number): { lowpassHz: number; gain: number } {
+/** 스로틀·부하가 정하는 머플러 저역통과(Hz·Q)와 톤 게인(선형) */
+export function toneFor(throttle: number, load: number): { lowpassHz: number; gain: number; q: number } {
   const th = clamp01(throttle)
+  const ld = clamp01(load)
   return {
     lowpassHz: TONE_HZ_BASE + TONE_HZ_SPAN * th,
-    gain: dbToGain(TONE_DB_BASE + TONE_DB_THROTTLE * th + TONE_DB_LOAD * clamp01(load)),
+    gain: dbToGain(TONE_DB_BASE + TONE_DB_THROTTLE * th + TONE_DB_LOAD * ld),
+    q: TONE_Q_BASE - TONE_Q_LOAD * ld,
   }
+}
+
+/**
+ * 톤을 끌고 갈 시정수 (초). 스로틀을 열 때는 30 ms로 튀어나오고 닫을 때는 120 ms로 잦아든다 —
+ * 같은 속도로 오가면 "열고 닫아도 그대로"로 들린다. 실제 엔진도 열 때가 훨씬 빠르다.
+ */
+export function throttleTau(next: number, prev: number): number {
+  return clamp01(next) > clamp01(prev) ? TONE_TAU_OPEN : TONE_TAU_CLOSE
 }
 
 /**
@@ -84,7 +145,7 @@ export function stopPlan(running: boolean, stopSoundS: number): { fade: boolean;
 }
 
 /**
- * 남은 교차 페이드 길이 (초). 페이드 도중에 또 칸이 바뀌면 나가던 소스는 이미 절반쯤 내려와
+ * 남은 교차 페이드 길이 (초). 페이드 도중에 또 칸이 바뀌면 나가던 칸은 이미 절반쯤 내려와
  * 있으므로, 남은 만큼만 쓰고 끝낸다 (0에서 시작하는 커브는 길이 0이 되므로 최소값을 둔다).
  */
 export function fadeSeconds(from: number): number {
@@ -106,16 +167,46 @@ export function fadeCurve(from: number, rising: boolean, points: number = FADE_P
   return curve
 }
 
+/**
+ * 두 보이스의 시작 지점 (초). r0·r1은 0~1 난수.
+ *
+ * 차이는 루프 길이의 40~60%로 잡되 **점화 주기의 정수배로 스냅한다**. 루프는 점화 주기의
+ * 정수배로 잘려 있으므로(build-engine-bank.py), 정수 주기만큼 어긋난 두 복사본은 기본파의
+ * 위상이 정확히 맞는다 — 기본파는 +6 dB로 더해지고, 점화마다 다른 잔결만 비상관으로 섞인다.
+ * 스냅하지 않으면 위상차가 칸을 갈아탈 때마다 무작위가 되어, 운 나쁘면 기본파가 상쇄돼
+ * 속이 빈 소리가 나거나(φ≈π) 쿵 하고 부푼다. 스냅해 두면 보이스 B의 rate LFO(±0.15%)가
+ * 위상을 ±1.7 rad 안에서만 흔들고, 그만큼의 느린 숨결(−3.5 dB 폭, 0.09 Hz)만 남는다.
+ */
+export function voiceOffsets(duration: number, loopRpm: number, r0: number, r1: number): [number, number] {
+  const dur = Number.isFinite(duration) && duration > 0 ? duration : 0
+  if (dur <= 0) return [0, 0]
+  const want = dur * (VOICE_OFFSET_MIN + VOICE_OFFSET_SPAN * clamp01(r1))
+  const period = Number.isFinite(loopRpm) && loopRpm > 0 ? 60 / loopRpm : 0
+  const delta = period > 0 && period < dur / 2 ? period * Math.round(want / period) : want
+  const a = (clamp01(r0) * dur) % dur     // r0=1이면 dur가 되므로 0으로 되돌린다
+  return [a, (a + delta) % dur]
+}
+
 interface Bank { loops: Loop[]; buffers: AudioBuffer[]; start: AudioBuffer | null; stop: AudioBuffer | null }
-interface Slot { index: number; src: AudioBufferSourceNode; gain: GainNode }
+/** 한 칸을 울리는 소스 하나 — 소스·레벨 게인과 거기 매달린 LFO들 */
+interface Voice { src: AudioBufferSourceNode; lvl: GainNode; oscs: OscillatorNode[]; gains: GainNode[]; rateDepth: GainNode | null }
+/** 지금 울리는 칸 하나 — 보이스 둘이 하나의 교차 페이드 게인 아래 묶여 있다 */
+interface Slot { index: number; gain: GainNode; voices: Voice[] }
 
 let ctx: AudioContext | null = null
 let master: GainNode | null = null
-/** 루프만 지나가는 버스 — start/stop 페이드가 여기에 걸린다 (원샷은 영향받지 않는다) */
+/** 루프 보이스만 모이는 곳 — 저역 셸프가 여기에만 걸린다(합성 층은 지나지 않는다) */
+let loopMix: GainNode | null = null
+let loopShelf: BiquadFilterNode | null = null
+/** 루프와 합성 층이 모두 지나가는 버스 — start/stop 페이드가 여기에 걸린다 (원샷은 영향받지 않는다) */
 let loopBus: GainNode | null = null
-let loopLPF: BiquadFilterNode | null = null
+let loadShelf: BiquadFilterNode | null = null
+let antiAlias: BiquadFilterNode | null = null
 let toneLPF: BiquadFilterNode | null = null
 let toneGain: GainNode | null = null
+let high: HighLayer | null = null
+let intake: IntakeLayer | null = null
+let burble: BurbleLayer | null = null
 /** 지금 울리는 칸 하나. outgoing은 교차 페이드로 물러나는 중인 옛 칸(없으면 null) */
 let active: Slot | null = null
 let outgoing: Slot | null = null
@@ -127,10 +218,16 @@ let timer: ReturnType<typeof setInterval> | null = null
 let suspendTimer: ReturnType<typeof setTimeout> | null = null
 /** 스로틀 0~1 */
 let level = 0
+/** 직전 tick의 스로틀 — 열고 있는지 닫고 있는지로 시정수를 고른다 */
+let lastLevel = 0
 /** 바깥에서 받은 회전수. 0이면 루프를 내린다 */
 let rpmLevel = 0
 /** 물린 기어가 거는 부하 0~1 */
 let loadLevel = 0
+/** 평활한 d(rpm)/dt (rpm/s)와 그것을 재는 데 쓰는 직전 tick의 값 */
+let dRpm = 0
+let lastRpm = 0
+let lastTickAt = 0
 /** blip() 제스처가 끝나는 시각 — 그때까지 tick()은 톤 게인을 건드리지 않는다 */
 let blipUntil = 0
 
@@ -170,16 +267,38 @@ function audioContext(): AudioContext | null {
   toneLPF = ctx.createBiquadFilter()
   toneLPF.type = 'lowpass'
   toneLPF.frequency.value = tone.lowpassHz
+  toneLPF.Q.value = tone.q
   toneLPF.connect(toneGain)
   // 뱅크 최고 칸 위에서는 playbackRate가 1.9배까지 올라간다. 44.1 kHz 소스를 그만큼 끌어올리면
-  // 고역에 리샘플링 찌꺼기가 끼는데, 9 kHz 2극 저역통과로 살짝 덮는다 (톤 필터와 별개로 늘 걸린다).
-  loopLPF = ctx.createBiquadFilter()
-  loopLPF.type = 'lowpass'
-  loopLPF.frequency.value = LOOP_LPF_HZ
-  loopLPF.connect(toneLPF)
+  // 고역에 리샘플링 찌꺼기가 끼는데, 1.4배를 넘을 때만 9 kHz → 7 kHz로 내려 덮는다.
+  antiAlias = ctx.createBiquadFilter()
+  antiAlias.type = 'lowpass'
+  antiAlias.frequency.value = antiAliasHz(1)
+  antiAlias.connect(toneLPF)
+  // 물린 기어가 거는 부하는 저역을 조금 부풀린다 (엔진이 버티는 느낌)
+  loadShelf = ctx.createBiquadFilter()
+  loadShelf.type = 'lowshelf'
+  loadShelf.frequency.value = LOAD_SHELF_HZ
+  loadShelf.gain.value = 0
+  loadShelf.connect(antiAlias)
   loopBus = ctx.createGain()
   loopBus.gain.value = 0
-  loopBus.connect(loopLPF)
+  loopBus.connect(loadShelf)
+  // 고회전에서 루프에만 주는 저역 셸프 — 합성 층은 이미 제 저역을 갖고 있어 지나지 않는다
+  loopShelf = ctx.createBiquadFilter()
+  loopShelf.type = 'lowshelf'
+  loopShelf.frequency.value = LOOP_SHELF_HZ
+  loopShelf.gain.value = 0
+  loopShelf.connect(loopBus)
+  loopMix = ctx.createGain()
+  loopMix.gain.value = 1
+  loopMix.connect(loopShelf)
+
+  const now = ctx.currentTime
+  const noise = createNoiseBuffer(ctx)
+  high = createHighLayer(ctx, loopBus, now)
+  intake = createIntakeLayer(ctx, loopBus, noise, now)
+  burble = createBurbleLayer(ctx, loopBus, noise)
 
   if (typeof document !== 'undefined') document.addEventListener('visibilitychange', handleVisibilityChange)
   return ctx
@@ -242,8 +361,30 @@ function playOneShot(buf: AudioBuffer | null | undefined) {
   src.start()
 }
 
+/** 보이스 하나를 at에 멈추고, 끝나면 매달린 노드를 전부 떼어 낸다 */
+function stopVoice(v: Voice, at: number) {
+  v.src.onended = () => {
+    v.src.disconnect()
+    v.lvl.disconnect()
+    for (const g of v.gains) g.disconnect()
+    for (const o of v.oscs) o.disconnect()
+  }
+  for (const o of v.oscs) {
+    try {
+      o.stop(at)
+    } catch {
+      /* 이미 멈춘 오실레이터 */
+    }
+  }
+  try {
+    v.src.stop(at)
+  } catch {
+    /* 이미 멈춘 소스 */
+  }
+}
+
 /**
- * 옛 소스를 30 ms에 걸쳐 지우고 끊는다.
+ * 옛 칸을 30 ms에 걸쳐 지우고 끊는다.
  * 붙잡는 값 `g.value`는 호출 시점(ctx.currentTime)의 값이다 — tick에서는 now가 바로 지금이라 정확하고,
  * stop()이 now+STOP_FADE_S로 미뤄 부를 때는 살짝 낡은 값이지만 그때는 loopBus가 이미 0에 가깝다.
  */
@@ -256,15 +397,8 @@ function retire(slot: Slot, now: number) {
   } catch {
     /* 진행 중인 setValueCurve를 자르지 못하는 브라우저 — 페이드 없이 바로 멈춘다 */
   }
-  slot.src.onended = () => {
-    slot.src.disconnect()
-    slot.gain.disconnect()
-  }
-  try {
-    slot.src.stop(now + SLOT_FADE_S + 0.02)
-  } catch {
-    /* 이미 멈춘 소스 */
-  }
+  for (const v of slot.voices) stopVoice(v, now + SLOT_FADE_S + 0.02)
+  slot.voices[0]?.src.addEventListener('ended', () => slot.gain.disconnect())
 }
 
 /** 울리고 있는 것을 모두 거둔다 (정지·뱅크 없음·시동 꺼짐) */
@@ -275,22 +409,60 @@ function releaseLoops(now: number) {
   active = null
 }
 
-/** index 루프를 게인 0으로 새로 건다 (임의 지점에서 시작 — 앞뒤 칸과 위상이 겹치지 않게) */
+/**
+ * index 루프를 게인 0으로 새로 건다. 같은 버퍼를 서로 40% 이상(점화 주기의 정수배) 떨어진
+ * 지점에서 시작하는 보이스 둘로 울려 "0.9~2초마다 같은 대목"이라는 느낌을 지운다. 둘은 등파워로
+ * 섞이고 각자 느린 레벨 LFO(0.13·0.17 Hz)를 받는다. 보이스 B에는 ±0.15% playbackRate LFO(0.09 Hz)가
+ * 더 붙어 맞춰 둔 위상을 ±1.7 rad 안에서 천천히 흔든다 — 상쇄 없이 숨 쉬는 느낌만 남는다.
+ */
 function startSlot(index: number, rate: number, now: number): Slot | null {
   const ac = ctx
-  if (!ac || !loopBus || !bank) return null
+  if (!ac || !loopMix || !bank) return null
   const buffer = bank.buffers[index]
   if (!buffer) return null
   const gain = ac.createGain()
   gain.gain.value = 0
-  gain.connect(loopBus)
-  const src = ac.createBufferSource()
-  src.buffer = buffer
-  src.loop = true
-  src.playbackRate.value = rate
-  src.connect(gain)
-  src.start(now, Math.random() * buffer.duration)
-  return { index, src, gain }
+  gain.connect(loopMix)
+  const offsets = voiceOffsets(buffer.duration, bank.loops[index]?.rpm ?? 0, Math.random(), Math.random())
+  const voices: Voice[] = []
+  for (let i = 0; i < 2; i++) {
+    const lvl = ac.createGain()
+    lvl.gain.value = VOICE_GAIN
+    lvl.connect(gain)
+    const depth = ac.createGain()
+    depth.gain.value = VOICE_GAIN * (dbToGain(VOICE_LFO_DB) - 1)
+    depth.connect(lvl.gain)
+    const lfo = ac.createOscillator()
+    lfo.type = 'sine'
+    lfo.frequency.value = VOICE_LFO_HZ[i]
+    lfo.connect(depth)
+    lfo.start(now)
+
+    const src = ac.createBufferSource()
+    src.buffer = buffer
+    src.loop = true
+    src.playbackRate.value = rate
+    src.connect(lvl)
+
+    const oscs = [lfo]
+    const gains = [depth]
+    let rateDepth: GainNode | null = null
+    if (i === 1) {
+      rateDepth = ac.createGain()
+      rateDepth.gain.value = rate * RATE_LFO_DEPTH
+      rateDepth.connect(src.playbackRate)
+      const rateLfo = ac.createOscillator()
+      rateLfo.type = 'sine'
+      rateLfo.frequency.value = RATE_LFO_HZ
+      rateLfo.connect(rateDepth)
+      rateLfo.start(now)
+      oscs.push(rateLfo)
+      gains.push(rateDepth)
+    }
+    src.start(now, offsets[i])
+    voices.push({ src, lvl, oscs, gains, rateDepth })
+  }
+  return { index, gain, voices }
 }
 
 /** 등파워 곡선으로 페이드. setValueCurveAtTime을 못 쓰는 환경이면 선형으로 갈음한다 */
@@ -305,8 +477,8 @@ function fadeParam(param: AudioParam, from: number, rising: boolean, now: number
 }
 
 /**
- * 칸 갈아타기. 새 소스를 걸고 0.25초 등파워 교차 페이드한 뒤 옛 소스를 끊는다.
- * 페이드가 끝나기 전에 또 바뀌면 물러나던 소스는 즉시 거둔다 — 셋이 동시에 울리지 않게.
+ * 칸 갈아타기. 새 칸(보이스 둘)을 걸고 0.25초 등파워 교차 페이드한 뒤 옛 칸을 끊는다.
+ * 페이드가 끝나기 전에 또 바뀌면 물러나던 칸은 즉시 거둔다 — 셋이 동시에 울리지 않게.
  */
 function switchTo(index: number, rate: number, now: number) {
   if (outgoing) retire(outgoing, now)
@@ -324,30 +496,43 @@ function switchTo(index: number, rate: number, now: number) {
   const secs = fadeSeconds(from)
   fadeParam(next.gain.gain, from, true, now, secs)
   fadeParam(prev.gain.gain, from, false, now, secs)
-  prev.src.onended = () => {
-    prev.src.disconnect()
+  for (const v of prev.voices) stopVoice(v, now + secs + 0.02)
+  prev.voices[0]?.src.addEventListener('ended', () => {
     prev.gain.disconnect()
     if (outgoing === prev) outgoing = null
-  }
-  try {
-    prev.src.stop(now + secs + 0.02)
-  } catch {
-    /* 이미 멈춘 소스 */
-  }
+  })
 }
 
-/** 스로틀·부하가 정하는 톤을 지금 값으로 끌고 간다 */
+/** 스로틀·부하가 정하는 톤을 지금 값으로 끌고 간다 (열 때 빠르게, 닫을 때 느리게) */
 function updateTone(now: number) {
-  const { lowpassHz, gain } = toneFor(level, loadLevel)
-  toneLPF?.frequency.setTargetAtTime(lowpassHz, now, TONE_TAU)
-  if (now >= blipUntil) toneGain?.gain.setTargetAtTime(gain, now, TONE_TAU)
+  const { lowpassHz, gain, q } = toneFor(level, loadLevel)
+  const tau = throttleTau(level, lastLevel)
+  lastLevel = level
+  toneLPF?.frequency.setTargetAtTime(lowpassHz, now, tau)
+  toneLPF?.Q.setTargetAtTime(q, now, TONE_TAU_CLOSE)
+  loadShelf?.gain.setTargetAtTime(LOAD_SHELF_DB * clamp01(loadLevel), now, TONE_TAU_CLOSE)
+  if (now >= blipUntil) toneGain?.gain.setTargetAtTime(gain, now, tau)
+}
+
+/** 합성 층 셋을 지금 상태로 끌고 간다 */
+function updateLayers(state: LayerState, now: number) {
+  if (high) updateHighLayer(high, state, now, LAYER_TAU)
+  if (intake) updateIntakeLayer(intake, state, now, LAYER_TAU)
+  if (burble) updateBurbleLayer(burble, state, now)
+  loopShelf?.gain.setTargetAtTime(loopShelfDb(state.rpm), now, LAYER_TAU)
 }
 
 function tick() {
   const ac = ctx
   if (!ac) return
   const now = ac.currentTime
+  // rpm 기울기는 tick 간격으로 재고 지수평활한다 — 한 tick의 잡음으로 버블이 깜빡이지 않게
+  const dt = lastTickAt > 0 ? now - lastTickAt : TICK_MS / 1000
+  lastTickAt = now
+  dRpm += (rpmSlope(lastRpm, rpmLevel, dt) - dRpm) * DRPM_SMOOTH
+  lastRpm = rpmLevel
   updateTone(now)
+  updateLayers({ rpm: rpmLevel, throttle: level, load: loadLevel, dRpm }, now)
   const loops = bank?.loops
   // 뱅크가 아직 없거나 시동이 꺼졌으면 루프를 모두 내린다. 디코드가 끝나면 다음 tick이 집어 든다
   if (!loops || loops.length === 0 || rpmLevel <= 0) {
@@ -360,8 +545,14 @@ function tick() {
   // 맥놀이가 생기지 않는다 (뱅크 rpm이 실측값이라 어긋남이 0.1% 아래다)
   for (const slot of [active, outgoing]) {
     if (!slot) continue
-    slot.src.playbackRate.setTargetAtTime(rpmLevel / loops[slot.index].rpm, now, RATE_TAU)
+    const rate = rpmLevel / loops[slot.index].rpm
+    for (const v of slot.voices) {
+      v.src.playbackRate.setTargetAtTime(rate, now, RATE_TAU)
+      v.rateDepth?.gain.setTargetAtTime(rate * RATE_LFO_DEPTH, now, RATE_TAU)
+    }
   }
+  const rate = active ? rpmLevel / loops[active.index].rpm : 1
+  antiAlias?.frequency.setTargetAtTime(antiAliasHz(rate), now, LAYER_TAU)
 }
 
 /** 시동. 두 번 불러도 겹치지 않는다. start.ogg를 울리고 0.8초 뒤부터 루프를 0.3초에 걸쳐 올린다 */
@@ -376,9 +567,13 @@ export function start(): void {
   if (timer !== null) return
   const now = ac.currentTime
   level = 0
+  lastLevel = 0
   loadLevel = 0
   // 바깥에서 setRpm이 오기 전까지는 아이들로 돈다
   rpmLevel = IDLE_RPM
+  lastRpm = IDLE_RPM
+  lastTickAt = 0
+  dRpm = 0
   blipUntil = 0
   if (!bank) warnOnce('cold', '뱅크가 아직 준비되지 않았다 — 디코드가 끝나면 소리가 붙는다')
   playOneShot(bank?.start)
@@ -397,12 +592,12 @@ export function setRpm(rpm: number): void {
   rpmLevel = safeRpm(rpm)
 }
 
-/** 스로틀 0~1. 머플러가 열리고 톤 게인이 오른다 */
+/** 스로틀 0~1. 머플러가 열리고 톤 게인이 오르고 흡기 그로울이 붙는다 */
 export function setThrottle(t: number): void {
   level = clamp01(t)
 }
 
-/** 물린 기어가 엔진에 거는 부하 0~1. 최대 +3 dB */
+/** 물린 기어가 엔진에 거는 부하 0~1. 톤 +3 dB, 120 Hz +1.5 dB, 저역통과 Q −0.3 */
 export function setLoad(l: number): void {
   loadLevel = clamp01(l)
 }
@@ -429,8 +624,12 @@ export function blip(): void {
  */
 export function stop(): void {
   level = 0
+  lastLevel = 0
   rpmLevel = 0
   loadLevel = 0
+  dRpm = 0
+  lastRpm = 0
+  lastTickAt = 0
   const plan = stopPlan(timer !== null, bank?.stop?.duration ?? 0)
   if (timer !== null) {
     clearInterval(timer)

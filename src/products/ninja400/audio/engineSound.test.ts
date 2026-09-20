@@ -11,11 +11,14 @@ import {
   start,
   stop,
   stopPlan,
+  throttleTau,
   toneFor,
+  voiceOffsets,
 } from './engineSound'
 
-// v4는 실녹음 루프를 한 번에 하나만 재생한다. 오디오 그래프는 노드 환경(window 없음)에서
-// 만들어지지 않으므로 값을 정하는 순수 함수만 여기서 못박는다. 칸 고르기는 pickLoop.test.ts가 맡는다.
+// v5는 실녹음 루프 한 칸을 보이스 둘로 울리고 그 위에 합성 층을 얹는다. 오디오 그래프는
+// 노드 환경(window 없음)에서 만들어지지 않으므로 값을 정하는 순수 함수만 여기서 못박는다.
+// 칸 고르기는 pickLoop.test.ts, 합성 층은 engineLayers.test.ts가 맡는다.
 
 describe('회전수 정리', () => {
   it('유한하지 않거나 0 이하면 0 — playbackRate가 0이 될 수 없어 루프를 내려야 한다', () => {
@@ -28,20 +31,81 @@ describe('회전수 정리', () => {
 })
 
 describe('톤', () => {
-  it('저역통과는 스로틀 0에서 1400Hz, 1에서 6000Hz', () => {
-    expect(toneFor(0, 0).lowpassHz).toBe(1400)
-    expect(toneFor(1, 0).lowpassHz).toBe(6000)
-    expect(toneFor(0.5, 0).lowpassHz).toBe(3700)
+  // v4는 1400~6000 Hz / −5~0 dB로 좁아서 "열고 닫아도 변화가 없다"는 말을 들었다
+  it('저역통과는 스로틀 0에서 1100Hz, 1에서 7000Hz', () => {
+    expect(toneFor(0, 0).lowpassHz).toBe(1100)
+    expect(toneFor(1, 0).lowpassHz).toBe(7000)
+    expect(toneFor(0.5, 0).lowpassHz).toBe(4050)
   })
-  it('게인은 스로틀 0에서 −5dB, 1에서 0dB, 부하 1이면 +3dB', () => {
-    expect(20 * Math.log10(toneFor(0, 0).gain)).toBeCloseTo(-5, 6)
+  it('게인은 스로틀 0에서 −7dB, 1에서 0dB, 부하 1이면 +3dB', () => {
+    expect(20 * Math.log10(toneFor(0, 0).gain)).toBeCloseTo(-7, 6)
     expect(20 * Math.log10(toneFor(1, 0).gain)).toBeCloseTo(0, 6)
     expect(20 * Math.log10(toneFor(1, 1).gain)).toBeCloseTo(3, 6)
+    expect(20 * Math.log10(toneFor(0, 1).gain)).toBeCloseTo(-4, 6)
+  })
+  it('부하는 저역통과의 공진을 낮춘다 — 1.0에서 0.7로', () => {
+    expect(toneFor(0.5, 0).q).toBeCloseTo(1.0, 10)
+    expect(toneFor(0.5, 0.5).q).toBeCloseTo(0.85, 10)
+    expect(toneFor(0.5, 1).q).toBeCloseTo(0.7, 10)
   })
   it('스로틀·부하의 NaN과 범위 밖 값은 0~1로 눌린다', () => {
     expect(toneFor(NaN, NaN)).toEqual(toneFor(0, 0))
     expect(toneFor(5, 5)).toEqual(toneFor(1, 1))
     expect(toneFor(-3, -3)).toEqual(toneFor(0, 0))
+  })
+})
+
+describe('스로틀 시정수', () => {
+  it('열 때는 30 ms, 닫거나 그대로일 때는 120 ms', () => {
+    // 같은 속도로 오가면 열고 닫는 것이 소리로 드러나지 않는다 — 열 때만 튀어나와야 한다
+    expect(throttleTau(1, 0)).toBeCloseTo(0.03, 10)
+    expect(throttleTau(0.31, 0.3)).toBeCloseTo(0.03, 10)
+    expect(throttleTau(0, 1)).toBeCloseTo(0.12, 10)
+    expect(throttleTau(0.3, 0.3)).toBeCloseTo(0.12, 10)
+  })
+  it('범위 밖·NaN은 0~1로 눌러 견준다', () => {
+    expect(throttleTau(5, 1)).toBe(throttleTau(1, 1))
+    expect(throttleTau(NaN, 0.5)).toBe(throttleTau(0, 0.5))
+  })
+})
+
+describe('두 보이스 시작 지점', () => {
+  // 1325.5 rpm 루프: 점화 주기 45.27 ms, 43주기 1.9465 s
+  const DUR = 1.9465
+  const RPM = 1325.5
+  const per = 60 / RPM
+
+  it('차이가 루프 길이의 40% 이상이다 (어느 쪽으로 돌려 재도)', () => {
+    for (let i = 0; i <= 20; i++) {
+      for (let j = 0; j <= 20; j++) {
+        const [a, b] = voiceOffsets(DUR, RPM, i / 20, j / 20)
+        expect(a).toBeGreaterThanOrEqual(0)
+        expect(a).toBeLessThan(DUR)
+        expect(b).toBeGreaterThanOrEqual(0)
+        expect(b).toBeLessThan(DUR)
+        const d = Math.abs(a - b)
+        expect(Math.min(d, DUR - d)).toBeGreaterThan(0.39 * DUR)
+      }
+    }
+  })
+
+  it('차이는 점화 주기의 정수배다 — 두 복사본의 기본파 위상이 맞아야 상쇄되지 않는다', () => {
+    for (let j = 0; j <= 20; j++) {
+      const [a, b] = voiceOffsets(DUR, RPM, 0.1, j / 20)
+      const delta = (b - a + DUR) % DUR
+      expect(Math.abs(delta / per - Math.round(delta / per))).toBeLessThan(1e-9)
+    }
+  })
+
+  it('루프 rpm을 모르면 정수배 스냅 없이 40~60%만 지킨다', () => {
+    const [a, b] = voiceOffsets(DUR, 0, 0, 0.5)
+    expect(b - a).toBeCloseTo(DUR * 0.5, 10)
+  })
+
+  it('길이가 성치 않으면 둘 다 0', () => {
+    expect(voiceOffsets(0, RPM, 0.3, 0.7)).toEqual([0, 0])
+    expect(voiceOffsets(NaN, RPM, 0.3, 0.7)).toEqual([0, 0])
+    expect(voiceOffsets(-1, RPM, 0.3, 0.7)).toEqual([0, 0])
   })
 })
 

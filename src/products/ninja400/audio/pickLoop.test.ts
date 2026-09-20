@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { pickLoop, SWITCH_HYSTERESIS, type Loop } from './pickLoop'
 
 /** 실제 뱅크(public/audio/ninja400/engine/bank.json)와 같은 rpm 사다리 — 실측값이라 소수가 붙는다 */
-const BANK: Loop[] = [1325.5, 2248.4, 2745.8, 3730.2, 4076.2, 4594.8, 5515.0, 6495.1].map((rpm, i) => ({
+const BANK: Loop[] = [1325.5, 2248.4, 2745.8, 3730.2, 4096.8, 4594.8, 5514.5, 6510.3].map((rpm, i) => ({
   rpm,
   file: `${i}.ogg`,
 }))
