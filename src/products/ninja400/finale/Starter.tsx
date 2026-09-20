@@ -54,6 +54,7 @@ export function Starter() {
       ride.stalled = false
       ride.running = true
       ride.lowRpmFor = 0
+      ride.fuelCut = false
       engineSound.start()
       notifyRide()
     },

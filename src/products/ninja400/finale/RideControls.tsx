@@ -67,9 +67,11 @@ export function RideControls() {
             ride.shiftKick = -1
             return
           }
+          // 시동이 꺼져 있어도 클러치만 잡았으면 단수는 바뀐다 — 실차도 그렇고,
+          // 중립으로 빼야 시동 버튼이 받아 주므로 막으면 갇힌다. 다만 죽은 엔진은 울지 않는다.
           ride.gear = e.code === 'ArrowRight' ? shiftUp(ride.gear) : shiftDown(ride.gear)
           ride.shiftKick = 1
-          engineSound.blip()
+          if (!ride.stalled) engineSound.blip()
           return
         }
         default:
@@ -122,6 +124,7 @@ export function RideControls() {
     ride.distance = next.distance
     ride.stalled = next.stalled
     ride.lowRpmFor = next.lowRpmFor
+    ride.fuelCut = next.fuelCut
     ride.lean = next.lean
     if (ride.shiftKick !== 0) {
       const left = Math.abs(ride.shiftKick) - dt / KICK_S

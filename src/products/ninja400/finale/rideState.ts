@@ -34,6 +34,7 @@ export const ride: RideState = {
   distance: 0,
   running: false,
   lowRpmFor: 0,
+  fuelCut: false,
   /** 뱅크각 (rad, + = 오른쪽). 노면·차체 연출이 이 값을 읽는다 */
   lean: 0,
   shiftKick: 0,
@@ -67,6 +68,7 @@ export function resetRide(): void {
   ride.distance = 0
   ride.running = false
   ride.lowRpmFor = 0
+  ride.fuelCut = false
   ride.lean = 0
   ride.shiftKick = 0
   rideInput.throttleKey = false

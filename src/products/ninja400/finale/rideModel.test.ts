@@ -4,7 +4,9 @@ import {
   GEAR_RATIOS,
   IDLE_RPM,
   LEAN_MAX,
+  LIMITER_BAND,
   MAX_RPM,
+  OVERREV_MAX,
   PRIMARY,
   REAR_TIRE_R_M,
   gearRatio,
@@ -29,6 +31,7 @@ const base = (o: Partial<RideSim> = {}): RideSim => ({
   stalled: false,
   running: true,
   lowRpmFor: 0,
+  fuelCut: false,
   lean: 0,
   ...o,
 })
@@ -77,14 +80,16 @@ describe('구동계 물리 v2', () => {
 
   // 서브스텝이 제 몫을 하는지 보려면 프레임 길이를 바꿔가며 같은 것을 물어야 한다.
   // 0.1초는 RideControls가 허용하는 최대 프레임(MAX_DT)이다.
-  it.each([1 / 120, 1 / 30, 0.1])('2. 중립 전개는 0.6~1.5초에 리미터에 닿고 12,500을 넘지 않는다 (dt=%f)', (dt) => {
+  // "12,000에 정확히 닿는 첫 프레임"은 더는 물을 수 없다 — 리미터가 연료를 끊었다 붙이며
+  // 위아래로 튀므로 프레임 경계에 12,000이 잡힐지가 dt에 따라 갈린다. 대역 진입으로 바꿨다.
+  it.each([1 / 120, 1 / 30, 0.1])('2. 중립 전개는 0.6~1.5초에 리미터 대역에 닿는다 (dt=%f)', (dt) => {
     let s = base()
     let reached = 0
     let peak = 0
     for (let t = 0; t < 3; t += dt) {
       s = stepRide(s, wot, dt)
       peak = Math.max(peak, s.rpm)
-      if (!reached && s.rpm >= MAX_RPM) reached = t + dt
+      if (!reached && s.rpm >= MAX_RPM - LIMITER_BAND) reached = t + dt
     }
     expect(reached).toBeGreaterThan(0.6)
     expect(reached).toBeLessThan(1.5)
@@ -314,7 +319,10 @@ describe('구동계 물리 v2', () => {
   })
 
   it('21. 오래 눌러도 캡을 넘지 않는다', () => {
-    const s = run(base({ gear: 4, speed: 20, rpm: syncRpm(4, 20) }), leanR, 30)
+    // 스로틀을 열어 둔다 — 스로틀을 닫고 30초를 굴리면 이제 러깅으로 꺼지고,
+    // 꺼진 엔진의 항력(DEAD_EB_FACTOR)까지 걸려 1 m/s 아래로 서 버린다. 그러면
+    // 목표 뱅크각이 0이 되어 차가 스스로 일어서므로 캡을 보는 시험이 되지 않는다.
+    const s = run(base({ gear: 4, speed: 20, rpm: syncRpm(4, 20) }), { ...leanR, throttleKey: true }, 30)
     expect(s.lean).toBeLessThanOrEqual(LEAN_MAX)
     expect(Math.abs(deg(s.lean) - 38)).toBeLessThan(0.01)
   })
@@ -343,6 +351,225 @@ describe('구동계 물리 v2', () => {
     // 1 m/s 아래에서 발산하지 않는다
     expect(turnRate(LEAN_MAX, 0)).toBeCloseTo(9.81 * Math.tan(LEAN_MAX), 10)
     expect(turnRate(LEAN_MAX, 0.01)).toBe(turnRate(LEAN_MAX, 1))
+  })
+
+  // --- 피드백 4회차: 시나리오 배터리로 잡은 것들 -------------------------------
+  // (.superpowers/sdd/round-3/trace.ts 로 14가지 주행 시나리오를 돌려 찾았다)
+
+  it('25. 리미터는 벽이 아니라 바운스다 — 12,000에 얼어붙지 않고 위아래로 튄다', () => {
+    // 고치기 전: 전개로 리미터에 닿으면 rpm이 12,000~12,010에 붙어 정지했다. 실차의 소프트 컷은
+    // 연료를 끊었다 붙이기를 반복해서 회전이 눈에 보이게 출렁인다.
+    let s = base({ gear: 1, speed: 19, rpm: 11000, clutch: 0 })
+    let lo = Infinity
+    let hi = 0
+    for (let i = 0; i < 60 * 8; i++) {
+      s = stepRide(s, wot, 1 / 60)
+      if (i > 60 * 2) {
+        lo = Math.min(lo, s.rpm)
+        hi = Math.max(hi, s.rpm)
+      }
+    }
+    expect(hi).toBeGreaterThan(MAX_RPM - 100)
+    expect(hi).toBeLessThan(12300)
+    expect(hi - lo).toBeGreaterThan(150)
+    expect(hi - lo).toBeLessThan(LIMITER_BAND + 120)
+  })
+
+  it('26. 출발에서 차속이 프레임당 1 km/h씩 뛰지 않는다 — 뒷바퀴 접지 한계', () => {
+    // 고치기 전: 클러치 용량 90 Nm이 1단(총감속 19.0)에서 5,600 N = 2.3 g를 밀어서
+    // 1/60초에 1.4 km/h씩 튀었다. 실차의 윌리 한계는 1.1 g다.
+    let s = base({ gear: 1, clutch: 1 })
+    let worst = 0
+    for (let i = 0; i < 60 * 6; i++) {
+      const prev = s.speed
+      s = stepRide(s, i < 30 ? { ...wot, clutchKey: true } : wot, 1 / 60)
+      worst = Math.max(worst, speedKmh(s.speed) - speedKmh(prev))
+    }
+    expect(worst).toBeLessThan(1)
+    // 그래도 출발은 한다 — 한계를 걸었다고 못 나가면 안 된다
+    expect(s.stalled).toBe(false)
+    expect(speedKmh(s.speed)).toBeGreaterThan(50)
+  })
+
+  it('27. 1단 출발에서 100 km/h까지 4~6초 (실차 5초대)', () => {
+    // 클러치를 잡은 채 0.5초 전개로 회전을 올렸다가 놓는다 — 실제 출발 동작
+    let s = base({ gear: 1, clutch: 1 })
+    let t100 = -1
+    let holdClutch = 0.5
+    let launching = true
+    let shiftAt = 0
+    for (let i = 0; i < 60 * 12 && t100 < 0; i++) {
+      const dt = 1 / 60
+      const t = i * dt
+      // 11,500에서 클러치를 0.3초 잡고 한 단 올린다 — 스로틀은 그동안 닫는다
+      if (holdClutch <= 0 && s.rpm >= 11500 && s.gear < 6 && t - shiftAt > 0.4) {
+        s = { ...s, gear: s.gear === 1 ? 2 : s.gear + 1 }
+        holdClutch = 0.3
+        shiftAt = t
+      }
+      const clutching = holdClutch > 0
+      if (clutching) holdClutch -= dt
+      else launching = false
+      const input = clutching ? { ...(launching ? wot : idle), clutchKey: true } : wot
+      s = stepRide(s, input, dt)
+      if (speedKmh(s.speed) >= 100) t100 = t + dt
+    }
+    expect(s.stalled).toBe(false)
+    expect(t100).toBeGreaterThan(4)
+    expect(t100).toBeLessThan(6)
+  })
+
+  it('28. 고속에서 중립으로 빼면 엔진은 아이들로 내려가고 차는 항력으로만 느려진다', () => {
+    // 사용자 신고: "특히 고속에서 N단으로 바꿨을 때". 6단 140 km/h → 클러치 → N → 클러치 놓기.
+    let s = cruising(6, 140 / 3.6)
+    s = run(s, { ...idle, clutchKey: true }, 0.4)
+    s = { ...s, gear: 0 }
+    s = run(s, { ...idle, clutchKey: true }, 0.2)
+    const before = s.speed
+    s = run(s, idle, 1)
+    // 항력만 — 140 km/h에서 (½ρCdA·v² + 구름)/m ≈ 1.5 m/s²
+    const decel = (before - s.speed) / 1
+    expect(decel).toBeGreaterThan(1.2)
+    expect(decel).toBeLessThan(1.8)
+    s = run(s, idle, 4)
+    expect(s.stalled).toBe(false)
+    expect(Math.abs(s.rpm - IDLE_RPM)).toBeLessThan(60)
+    expect(speedKmh(s.speed)).toBeGreaterThan(100)
+  })
+
+  it('29. 중립 140 km/h에서 2단을 넣고 클러치를 놓아도 과회전하지 않는다', () => {
+    // 동기 회전이 16,200 rpm이다. 고치기 전에는 엔진이 끌려 올라가는 대신 차가 1.4 g로 섰다.
+    // 지금은 뒷바퀴가 미끄러지는 몫(REAR_BRAKE_N)만 전해지고 회전은 상한 아래에 머문다.
+    let s = base({ gear: 2, speed: 140 / 3.6, rpm: IDLE_RPM })
+    let peak = 0
+    let worstDecel = 0
+    for (let i = 0; i < 60 * 4; i++) {
+      const prev = s.speed
+      s = stepRide(s, idle, 1 / 60)
+      peak = Math.max(peak, s.rpm)
+      worstDecel = Math.max(worstDecel, (prev - s.speed) * 60)
+      expect(Number.isFinite(s.rpm)).toBe(true)
+      expect(Number.isFinite(s.speed)).toBe(true)
+      expect(s.speed).toBeGreaterThanOrEqual(0)
+    }
+    expect(peak).toBeLessThan(12800)
+    // 뒤가 미끄러지는 한계 ≈ 0.37 g + 공기저항. 1 g로 서지 않는다
+    expect(worstDecel).toBeLessThan(0.6 * 9.81)
+    expect(s.speed).toBeLessThan(140 / 3.6)
+  })
+
+  it('30. 어떤 조합으로도 엔진 회전은 기계적 상한(OVERREV_MAX)을 넘지 않는다', () => {
+    const cases: RideSim[] = [
+      base({ gear: 1, speed: 120 / 3.6, rpm: IDLE_RPM }),
+      base({ gear: 2, speed: 160 / 3.6, rpm: 11000 }),
+      base({ gear: 1, speed: 200 / 3.6, rpm: 14000 }),
+      base({ gear: 3, speed: 180 / 3.6, rpm: 12500, clutch: 0.3 }),
+    ]
+    for (const start of cases) {
+      let s = start
+      for (let i = 0; i < 60 * 4; i++) {
+        s = stepRide(s, i % 2 ? wot : idle, 1 / 60)
+        expect(s.rpm).toBeLessThanOrEqual(OVERREV_MAX)
+        expect(Number.isFinite(s.rpm)).toBe(true)
+        expect(s.speed).toBeGreaterThanOrEqual(0)
+      }
+    }
+  })
+
+  it('31. 3단 60 km/h에서 1단으로 떨어뜨리면 회전이 뛰고 차는 느려진다 — 다만 뒷바퀴 한계 안에서', () => {
+    let s = cruising(3, 60 / 3.6)
+    s = run(s, { ...idle, clutchKey: true }, 0.3)
+    s = { ...s, gear: 1 }
+    s = run(s, { ...idle, clutchKey: true }, 0.1)
+    const before = s.speed
+    let peak = 0
+    let worstDecel = 0
+    for (let i = 0; i < 60 * 2; i++) {
+      const prev = s.speed
+      s = stepRide(s, idle, 1 / 60)
+      peak = Math.max(peak, s.rpm)
+      worstDecel = Math.max(worstDecel, (prev - s.speed) * 60)
+    }
+    expect(peak).toBeGreaterThan(5500)
+    expect(peak).toBeLessThanOrEqual(OVERREV_MAX)
+    expect(s.speed).toBeLessThan(before)
+    expect(worstDecel).toBeLessThan(0.6 * 9.81)
+  })
+
+  it('32. 중립 100 km/h 급제동은 0.7~0.95 g로 40~50 m 안에 선다', () => {
+    // 고치기 전 BRAKE_N 3200은 1.34 g·30 m였다 — 로드 스포츠가 낼 수 없는 값이다.
+    let s = base({ gear: 0, speed: 100 / 3.6, rpm: IDLE_RPM })
+    const d0 = s.distance
+    let stopped = -1
+    let worstDecel = 0
+    for (let i = 0; i < 60 * 8 && stopped < 0; i++) {
+      const prev = s.speed
+      s = stepRide(s, { ...idle, brakeKey: true }, 1 / 60)
+      worstDecel = Math.max(worstDecel, (prev - s.speed) * 60)
+      if (s.speed <= 0) stopped = (i + 1) / 60
+    }
+    expect(stopped).toBeGreaterThan(0)
+    expect(worstDecel).toBeGreaterThan(0.7 * 9.81)
+    expect(worstDecel).toBeLessThan(0.95 * 9.81)
+    expect(s.distance - d0).toBeGreaterThan(38)
+    expect(s.distance - d0).toBeLessThan(52)
+    expect(s.stalled).toBe(false)
+    expect(Math.abs(s.rpm - IDLE_RPM)).toBeLessThan(20)
+  })
+
+  it('33. 시동이 꺼진 채 기어를 물고 있으면 중립 타력보다 빨리 선다', () => {
+    // 고치기 전: 꺼지는 순간 구동계를 끊어서 중립 타력과 똑같이 굴러갔다.
+    // 실차는 꺼진 엔진의 압축·마찰이 브레이크로 걸린다.
+    let geared = base({ gear: 6, speed: 20 / 3.6, rpm: syncRpm(6, 20 / 3.6) })
+    for (let i = 0; i < 120 * 4 && !geared.stalled; i++) geared = stepRide(geared, idle, 1 / 120)
+    expect(geared.stalled).toBe(true)
+    const v0 = geared.speed
+    let neutral = base({ gear: 0, speed: v0, rpm: IDLE_RPM })
+    for (let i = 0; i < 120 * 10; i++) {
+      geared = stepRide(geared, idle, 1 / 120)
+      neutral = stepRide(neutral, idle, 1 / 120)
+    }
+    expect(geared.speed).toBeLessThan(neutral.speed - 1)
+    expect(geared.speed).toBeGreaterThanOrEqual(0)
+    expect(geared.rpm).toBe(0)
+  })
+
+  it('34. 구르는 중에 다시 걸면 클러치를 놓아도 안 꺼진다 (3단 30 km/h 범프)', () => {
+    // 꺼진 상태에서 Starter가 하는 일 그대로: stalled=false·running=true·rpm 0에서 시작
+    let s = base({ gear: 3, speed: 30 / 3.6, rpm: 0 })
+    s = run(s, { ...idle, clutchKey: true }, 1)
+    expect(Math.abs(s.rpm - IDLE_RPM)).toBeLessThan(60)
+    s = run(s, idle, 2)
+    expect(s.stalled).toBe(false)
+    // 동기(≈2,700)까지 끌려 올라가 계속 돈다
+    expect(s.rpm).toBeGreaterThan(1800)
+    expect(Math.abs(s.rpm / syncRpm(3, s.speed) - 1)).toBeLessThan(0.05)
+  })
+
+  it('35. 중립에서 0.15초 블립은 3,000 언저리까지 갔다 아이들로 돌아온다', () => {
+    let s = base()
+    let peak = 0
+    for (let i = 0; i < 9; i++) {
+      s = stepRide(s, wot, 1 / 60)
+      peak = Math.max(peak, s.rpm)
+    }
+    for (let i = 0; i < 180; i++) {
+      s = stepRide(s, idle, 1 / 60)
+      peak = Math.max(peak, s.rpm)
+    }
+    expect(peak).toBeGreaterThan(2500)
+    expect(peak).toBeLessThan(4500)
+    expect(Math.abs(s.rpm - IDLE_RPM)).toBeLessThan(20)
+  })
+
+  it('36. 스로틀을 살짝 열면 회전이 떨어지지 않고 올라간다', () => {
+    // 고치기 전: 토크를 개도에 선형으로 곱해서 5~17% 사이는 엔진 브레이크를 못 이겼다 —
+    // 스로틀을 조금 여는데 rpm이 내려가는 구멍이 있었다.
+    for (const throttle of [0.08, 0.15, 0.3, 0.5]) {
+      const s = run(base(), { ...idle, throttleMouse: throttle }, 2)
+      expect(s.rpm).toBeGreaterThan(IDLE_RPM)
+      expect(s.rpm).toBeLessThan(MAX_RPM)
+    }
   })
 
   it('제원 상수는 EX400G 값 그대로다', () => {
