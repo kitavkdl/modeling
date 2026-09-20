@@ -3,6 +3,7 @@ import {
   FINAL,
   GEAR_RATIOS,
   IDLE_RPM,
+  LEAN_MAX,
   MAX_RPM,
   PRIMARY,
   REAR_TIRE_R_M,
@@ -11,6 +12,7 @@ import {
   shiftUp,
   speedKmh,
   stepRide,
+  turnRate,
   wheelRpm,
   type RideInputs,
   type RideSim,
@@ -27,6 +29,7 @@ const base = (o: Partial<RideSim> = {}): RideSim => ({
   stalled: false,
   running: true,
   lowRpmFor: 0,
+  lean: 0,
   ...o,
 })
 
@@ -35,7 +38,14 @@ const run = (s: RideSim, input: RideInputs, seconds: number, dt = 1 / 120) => {
   return s
 }
 
-const idle: RideInputs = { throttleKey: false, brakeKey: false, clutchKey: false, throttleMouse: 0 }
+const idle: RideInputs = {
+  throttleKey: false,
+  brakeKey: false,
+  clutchKey: false,
+  throttleMouse: 0,
+  leanLeftKey: false,
+  leanRightKey: false,
+}
 const wot: RideInputs = { ...idle, throttleKey: true }
 
 /** 그 기어·그 차속에서 클러치가 직결이면 나와야 하는 엔진 회전 (rpm) */
@@ -215,6 +225,124 @@ describe('구동계 물리 v2', () => {
     expect(short.rpm).toBeGreaterThanOrEqual(4300)
     const long = run(base({ rpm: 6000 }), idle, 2.5)
     expect(Math.abs(long.rpm - IDLE_RPM)).toBeLessThan(100)
+  })
+
+  // --- 피드백 3회차: 시동 꺼짐 판정 확대와 스톨 래치 -----------------------------
+
+  it('14. 물린 기어·스로틀 닫힘에서 1,200 rpm 아래로 0.5초면 꺼진다', () => {
+    // 이전 규칙(1,050 rpm·0.4초)은 거버너가 붙잡는 1,000~1,050 사이에서만 죽어서
+    // 2단 4 m/s 러깅에 3.2초가 걸렸다. 실차 감각대로 아이들 바로 아래에서 죽인다.
+    let s = base({ gear: 2, speed: 4, rpm: syncRpm(2, 4) })
+    let at = -1
+    for (let i = 0; i < 120 * 6; i++) {
+      s = stepRide(s, idle, 1 / 120)
+      if (s.stalled) {
+        at = (i + 1) / 120
+        break
+      }
+    }
+    // 실측 3.20초 → 2.33초. 남은 시간은 1,668 rpm에서 1,200까지 러깅으로 내려가는 데 쓰인다
+    expect(at).toBeGreaterThan(0)
+    expect(at).toBeLessThan(2.6)
+    expect(s.rpm).toBe(0)
+  })
+
+  it('15. 러깅이어도 스로틀을 열고 있으면 죽지 않는다', () => {
+    // 약한 판정은 스로틀 5% 미만에서만 본다 — 저회전에서 붙잡고 가는 것은 정상 주행이다
+    const s = run(base({ gear: 1, speed: 3, rpm: syncRpm(1, 3) }), wot, 3)
+    expect(s.stalled).toBe(false)
+    expect(s.rpm).toBeGreaterThan(1200)
+  })
+
+  it('16. 중립·클러치 잡음은 1,200 아래 규칙에 걸리지 않고 아이들을 지킨다', () => {
+    const n = run(base(), idle, 5)
+    expect(n.stalled).toBe(false)
+    expect(Math.abs(n.rpm - IDLE_RPM)).toBeLessThan(20)
+    const c = run(base({ gear: 3, clutch: 1 }), { ...idle, clutchKey: true }, 5)
+    expect(c.stalled).toBe(false)
+    expect(Math.abs(c.rpm - IDLE_RPM)).toBeLessThan(20)
+  })
+
+  it('17. 한 번 꺼지면 3초 동안 rpm 0·stalled가 풀리지 않는다 (무엇을 눌러도)', () => {
+    // 화면에서는 꺼진 직후 회전계가 1,300으로 튀어 올랐다. 모델 쪽 래치를 못으로 박아 둔다.
+    let s = base({ gear: 2, speed: 6, rpm: syncRpm(2, 6) })
+    for (let i = 0; i < 120 * 10 && !s.stalled; i++) s = stepRide(s, idle, 1 / 120)
+    expect(s.stalled).toBe(true)
+    const pokes: RideInputs[] = [
+      idle,
+      wot,
+      { ...idle, clutchKey: true },
+      { ...wot, clutchKey: true },
+      { ...idle, brakeKey: true },
+      { ...idle, throttleMouse: 1 },
+    ]
+    for (let i = 0; i < 120 * 3; i++) {
+      if (i % 40 === 0) s = { ...s, gear: (s.gear + 1) % 7 }
+      s = stepRide(s, pokes[i % pokes.length], 1 / 120)
+      expect(s.stalled).toBe(true)
+      expect(s.rpm).toBe(0)
+    }
+  })
+
+  it('18. 스톨 직후 프레임이 길어도(0.1초) rpm은 0이고 NaN이 되지 않는다', () => {
+    let s = base({ gear: 1, speed: 3, rpm: syncRpm(1, 3), stalled: true })
+    for (let i = 0; i < 60; i++) {
+      s = stepRide(s, wot, 0.1)
+      expect(Number.isFinite(s.rpm)).toBe(true)
+      expect(s.rpm).toBe(0)
+    }
+  })
+
+  // --- 기울이기 (D/F) -----------------------------------------------------------
+
+  const leanL: RideInputs = { ...idle, leanLeftKey: true }
+  const leanR: RideInputs = { ...idle, leanRightKey: true }
+  const deg = (rad: number) => (rad * 180) / Math.PI
+
+  it('19. 20 m/s에서 왼쪽을 2초 누르면 −38°에 1° 안으로 붙는다', () => {
+    const s = run(base({ gear: 4, speed: 20, rpm: syncRpm(4, 20) }), leanL, 2)
+    expect(deg(s.lean)).toBeLessThan(0)
+    expect(Math.abs(deg(s.lean) + 38)).toBeLessThan(1)
+    expect(Math.abs(s.lean)).toBeLessThanOrEqual(LEAN_MAX)
+  })
+
+  it('20. 오른쪽도 대칭이고, 놓으면 2초 안에 1° 안으로 돌아온다', () => {
+    let s = run(base({ gear: 4, speed: 20, rpm: syncRpm(4, 20) }), leanR, 2)
+    expect(Math.abs(deg(s.lean) - 38)).toBeLessThan(1)
+    s = run(s, idle, 2)
+    expect(Math.abs(deg(s.lean))).toBeLessThan(1)
+  })
+
+  it('21. 오래 눌러도 캡을 넘지 않는다', () => {
+    const s = run(base({ gear: 4, speed: 20, rpm: syncRpm(4, 20) }), leanR, 30)
+    expect(s.lean).toBeLessThanOrEqual(LEAN_MAX)
+    expect(Math.abs(deg(s.lean) - 38)).toBeLessThan(0.01)
+  })
+
+  it('22. 1 m/s 아래(선 채)에서는 눌러도 기울지 않는다', () => {
+    const s = run(base({ gear: 0, speed: 0 }), leanL, 3)
+    expect(Math.abs(deg(s.lean))).toBeLessThan(1)
+    expect(s.lean).toBe(0)
+  })
+
+  it('23. 기울인 채 1 m/s 아래로 서면 눌러도 목표가 0이 되어 세워진다', () => {
+    let s = run(base({ gear: 4, speed: 20, rpm: syncRpm(4, 20) }), leanR, 2)
+    expect(Math.abs(deg(s.lean) - 38)).toBeLessThan(1)
+    // 중립으로 굴려서 세운다 — 기어를 문 채 차속만 0.5로 바꾸면 클러치가 다시 밀어 내보낸다
+    s = run({ ...s, gear: 0, speed: 0.5, rpm: IDLE_RPM }, leanR, 2)
+    expect(s.speed).toBeLessThan(1)
+    expect(Math.abs(deg(s.lean))).toBeLessThan(1)
+  })
+
+  it('24. turnRate는 g·tan(lean)/max(v,1)', () => {
+    expect(turnRate(0, 10)).toBe(0)
+    expect(turnRate(0, 0)).toBe(0)
+    expect(turnRate(0.3, 10)).toBeCloseTo((9.81 * Math.tan(0.3)) / 10, 10)
+    // 오른쪽(+)이 + 요 레이트, 왼쪽(−)이 − 요 레이트
+    expect(turnRate(-0.3, 10)).toBeCloseTo(-turnRate(0.3, 10), 10)
+    // 1 m/s 아래에서 발산하지 않는다
+    expect(turnRate(LEAN_MAX, 0)).toBeCloseTo(9.81 * Math.tan(LEAN_MAX), 10)
+    expect(turnRate(LEAN_MAX, 0.01)).toBe(turnRate(LEAN_MAX, 1))
   })
 
   it('제원 상수는 EX400G 값 그대로다', () => {

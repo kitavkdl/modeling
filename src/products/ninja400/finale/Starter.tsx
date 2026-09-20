@@ -34,6 +34,9 @@ export function Starter() {
 
   const onPointerDown = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
+      // 왼쪽 버튼만 받는다. OrbitControls는 오른쪽 드래그가 팬·가운데가 줌이라, 그 시작점이
+      // 시동 버튼 위였다는 이유만으로 꺼진 엔진이 조용히 다시 걸려 아이들(1,300 rpm)로 올라갔다.
+      if (e.button !== 0) return
       const current = store.getState().phase
       if (current === 'keyed') {
         e.stopPropagation()

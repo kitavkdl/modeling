@@ -9,6 +9,10 @@ export interface RideInput {
   throttleKey: boolean
   brakeKey: boolean
   clutchKey: boolean
+  /** D — 왼쪽으로 기울이기 */
+  leanLeftKey: boolean
+  /** F — 오른쪽으로 기울이기 */
+  leanRightKey: boolean
 }
 
 export interface RideState extends RideSim {
@@ -30,10 +34,18 @@ export const ride: RideState = {
   distance: 0,
   running: false,
   lowRpmFor: 0,
+  /** 뱅크각 (rad, + = 오른쪽). 노면·차체 연출이 이 값을 읽는다 */
+  lean: 0,
   shiftKick: 0,
 }
 
-export const rideInput: RideInput = { throttleKey: false, brakeKey: false, clutchKey: false }
+export const rideInput: RideInput = {
+  throttleKey: false,
+  brakeKey: false,
+  clutchKey: false,
+  leanLeftKey: false,
+  leanRightKey: false,
+}
 
 /**
  * 변속과 재시동이 허용되는 조건. **키 상태가 기준이다** — `ride.clutch`는 0.12초 시정수로
@@ -55,10 +67,13 @@ export function resetRide(): void {
   ride.distance = 0
   ride.running = false
   ride.lowRpmFor = 0
+  ride.lean = 0
   ride.shiftKick = 0
   rideInput.throttleKey = false
   rideInput.brakeKey = false
   rideInput.clutchKey = false
+  rideInput.leanLeftKey = false
+  rideInput.leanRightKey = false
   notifyRide()
 }
 

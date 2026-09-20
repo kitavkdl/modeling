@@ -42,11 +42,19 @@ const LOCK_EPS = 10
 /** 슬립 토크가 포화되는 회전차 (rad/s) */
 const SLIP_SOFT = 20
 /** 결합 상태에서 이 아래로 떨어지면 즉시 시동이 꺼진다 (rpm) */
-const STALL_HARD = 900
-/** 결합 상태에서 이 아래로 STALL_AFTER_S 동안 머물러도 꺼진다 (rpm) */
-const STALL_SOFT = 1050
+const STALL_HARD = 1000
+/**
+ * 물린 기어에서 스로틀을 닫은 채 이 아래로 STALL_AFTER_S 동안 머물면 꺼진다 (rpm).
+ * 1050이던 때는 거버너가 붙잡는 1000~1050 사이에서만 죽어서, 러깅으로 엔진을 죽이려면
+ * 몇 초씩 끌고 가야 했다(2단 4 m/s에 3.2초). 실차는 아이들 바로 아래에서 이미 꺼진다.
+ */
+const STALL_SOFT = 1200
 /** 약한 스톨 판정에 필요한 시간 (초) */
-const STALL_AFTER_S = 0.4
+const STALL_AFTER_S = 0.5
+/** 약한 스톨을 보는 클러치 물림도 문턱 (0~1). 반클러치로 살살 물린 상태는 봐준다 */
+const STALL_GRIP = 0.5
+/** 약한 스톨을 보는 스로틀 문턱 (0~1). 스로틀을 열고 있으면 러깅이라도 죽이지 않는다 */
+const STALL_THROTTLE = 0.05
 /**
  * 엔진 브레이크 기본 토크 (Nm). 관성이 0.03 kg·m²로 작아서 3 + 2.5·rpm/1000이면
  * 클러치를 잡은 0.3~0.5초짜리 변속 사이에 rpm이 아이들까지 곤두박질쳤다 — 그래서 낮췄다.
@@ -106,6 +114,17 @@ const OFF_TAU = 0.2
 /** 물림/직결 전환이 프레임 길이에 흔들리지 않도록 내부에서 이만큼씩 쪼개 적분한다 (초) */
 const SUB_DT = 1 / 240
 
+/** 최대 뱅크각 (rad = 38°). 키를 오래 누를수록 여기까지 눕고 더는 안 눕는다 */
+export const LEAN_MAX = (38 * Math.PI) / 180
+/** 눕는 시정수 (초) */
+const LEAN_IN_TAU = 0.35
+/** 세우는 시정수 (초) */
+const LEAN_OUT_TAU = 0.4
+/** 이 차속 아래에서는 목표 뱅크각을 0으로 둔다 (m/s) — 선 채로는 못 기운다 */
+const LEAN_MIN_SPEED = 1
+/** 중력가속도 (m/s²) */
+const G = 9.81
+
 const RPM_PER_RAD_S = 60 / (2 * Math.PI)
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v)
 
@@ -123,6 +142,8 @@ export interface RideSim {
   running: boolean
   /** STALL_SOFT 아래로 머문 시간 (초) */
   lowRpmFor: number
+  /** 뱅크각 (rad). + = 오른쪽 · − = 왼쪽 */
+  lean: number
 }
 
 export interface RideInputs {
@@ -131,6 +152,18 @@ export interface RideInputs {
   clutchKey: boolean
   /** 그립 드래그. 키 입력과 큰 쪽이 이긴다 */
   throttleMouse: number
+  /** D — 왼쪽으로 기울이기 */
+  leanLeftKey: boolean
+  /** F — 오른쪽으로 기울이기 */
+  leanRightKey: boolean
+}
+
+/**
+ * 뱅크각에서 나오는 요 레이트 (rad/s). 바이크 기구학: 횡가속도 = g·tan(lean)이고
+ * 그것을 차속으로 나누면 선회 각속도다. 저속에서 발산하지 않도록 1 m/s로 바닥을 깐다.
+ */
+export function turnRate(leanRad: number, speedMps: number): number {
+  return (G * Math.tan(leanRad)) / Math.max(speedMps, 1)
 }
 
 /** 1 → N → 2 → … → 6. 6단에서는 더 올라가지 않는다 */
@@ -256,7 +289,7 @@ export function stepRide(s: RideSim, input: RideInputs, dt: number): RideSim {
       if (grip > 0 && rpm < STALL_HARD && prevRpm >= STALL_HARD) {
         stalled = true
         lowRpmFor = 0
-      } else if (grip > 0 && rpm < STALL_SOFT) {
+      } else if (grip > STALL_GRIP && throttle < STALL_THROTTLE && rpm < STALL_SOFT) {
         lowRpmFor += h
         if (lowRpmFor >= STALL_AFTER_S) {
           stalled = true
@@ -275,5 +308,16 @@ export function stepRide(s: RideSim, input: RideInputs, dt: number): RideSim {
     rpm = approach(rpm, 0, OFF_TAU, dt)
     if (rpm < 30) rpm = 0
   }
-  return { ...s, rpm: stalled ? 0 : rpm, throttle, clutch, brake, speed, distance, stalled, lowRpmFor }
+  // 수치가 한 번이라도 깨지면 계기 바늘·사운드가 영영 NaN에 얼어붙는다 — 여기서 끊는다
+  if (!Number.isFinite(rpm)) rpm = 0
+
+  // 기울이기 — D가 왼쪽(−) · F가 오른쪽(+). 누르고 있는 동안 캡까지 자라고 놓으면 돌아온다.
+  const leanDir = (input.leanRightKey ? 1 : 0) - (input.leanLeftKey ? 1 : 0)
+  const leanTarget = speed < LEAN_MIN_SPEED ? 0 : leanDir * LEAN_MAX
+  let lean = approach(s.lean, leanTarget, leanTarget === 0 ? LEAN_OUT_TAU : LEAN_IN_TAU, dt)
+  // 1차 응답은 목표를 넘지 않지만, 캡이 줄어드는 경우(감속으로 목표가 0이 됨)까지 잘라 둔다
+  if (lean > LEAN_MAX) lean = LEAN_MAX
+  else if (lean < -LEAN_MAX) lean = -LEAN_MAX
+
+  return { ...s, rpm: stalled ? 0 : rpm, throttle, clutch, brake, speed, distance, stalled, lowRpmFor, lean }
 }

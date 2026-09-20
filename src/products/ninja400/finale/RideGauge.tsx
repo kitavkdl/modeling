@@ -93,13 +93,20 @@ export function RideGauge() {
     if (!running) return
     // 바늘만은 리액트를 거치지 않는다 — ride.rpm을 프레임마다 직접 읽어 1차 평활한 뒤
     // transform만 덮어쓴다. 다시 그려지는 것은 <g> 하나뿐이다.
-    let shown = ride.rpm
+    let shown = Number.isFinite(ride.rpm) ? ride.rpm : 0
     let last = performance.now()
     let raf = 0
     const tick = (now: number) => {
-      const dt = Math.min(NEEDLE_MAX_DT, (now - last) / 1000)
+      // dt를 0 아래로 내려보내지 않는다 — rAF 타임스탬프는 프레임 시작 시각이라 effect가 잡아 둔
+      // performance.now()보다 이를 수 있고, 음수 dt는 평활 계수를 -Infinity까지 보낸다.
+      // 그때 (target − shown)이 0이면 0 × -Infinity = NaN이 되고, 한 번 NaN이 된 shown은
+      // 영영 NaN이라 rotate(NaNdeg)가 조용히 무시되면서 바늘이 마지막 각도에 얼어붙는다.
+      const dt = Math.min(NEEDLE_MAX_DT, Math.max(0, (now - last) / 1000))
       last = now
-      shown += (ride.rpm - shown) * (1 - Math.exp(-dt / NEEDLE_TAU))
+      // 시동이 꺼졌으면 숫자와 같은 0을 본다 — 바늘만 다른 값을 가리키는 일이 없도록
+      const target = ride.stalled || !Number.isFinite(ride.rpm) ? 0 : ride.rpm
+      shown += (target - shown) * (1 - Math.exp(-dt / NEEDLE_TAU))
+      if (!Number.isFinite(shown)) shown = target
       const el = needle.current
       if (el) el.style.transform = `rotate(${angleOf(shown).toFixed(2)}deg)`
       raf = requestAnimationFrame(tick)
@@ -170,7 +177,7 @@ export function RideGauge() {
           시동 꺼짐 — {snap.gear !== 0 && snap.clutch < CLUTCH_ENGAGED ? '클러치 잡고 시동' : '시동 버튼'}
         </div>
       ) : null}
-      <div className="gauge-keys">↑ 스로틀 · ↓ 브레이크 · SHIFT 클러치 · ←→ 변속</div>
+      <div className="gauge-keys">↑ 스로틀 · ↓ 브레이크 · SHIFT 클러치 · ←→ 변속 · D F 기울이기</div>
     </div>
   )
 }

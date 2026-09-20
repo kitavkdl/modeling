@@ -6,7 +6,7 @@ import { rideLoad, shiftDown, shiftUp, stepRide } from './rideModel'
 import { clutchHeld, notifyRide, ride, rideInput } from './rideState'
 
 // 키보드 주행 조작. 그리는 것은 없고 window 이벤트와 매 프레임 계산만 맡는다.
-//   ↑ 스로틀 · ↓ 앞브레이크 · Shift 클러치 · ← 시프트 다운 · → 시프트 업
+//   ↑ 스로틀 · ↓ 앞브레이크 · Shift 클러치 · ← 시프트 다운 · → 시프트 업 · D/F 기울이기
 // Enter(건너뛰기)와 Ctrl+Z(실행 취소)는 엔진 HUD가 이미 쓰므로 건드리지 않는다.
 
 /** 변속 연출이 0으로 돌아오는 시간 (초) */
@@ -31,6 +31,8 @@ export function RideControls() {
       rideInput.throttleKey = false
       rideInput.brakeKey = false
       rideInput.clutchKey = false
+      rideInput.leanLeftKey = false
+      rideInput.leanRightKey = false
     }
     const onKeyDown = (e: KeyboardEvent) => {
       if (typing(e.target)) return
@@ -47,6 +49,14 @@ export function RideControls() {
         case 'ShiftRight':
           e.preventDefault()
           rideInput.clutchKey = true
+          return
+        case 'KeyD':
+          e.preventDefault()
+          rideInput.leanLeftKey = true
+          return
+        case 'KeyF':
+          e.preventDefault()
+          rideInput.leanRightKey = true
           return
         case 'ArrowLeft':
         case 'ArrowRight': {
@@ -78,6 +88,12 @@ export function RideControls() {
         case 'ShiftRight':
           rideInput.clutchKey = false
           return
+        case 'KeyD':
+          rideInput.leanLeftKey = false
+          return
+        case 'KeyF':
+          rideInput.leanRightKey = false
+          return
         default:
           return
       }
@@ -106,6 +122,7 @@ export function RideControls() {
     ride.distance = next.distance
     ride.stalled = next.stalled
     ride.lowRpmFor = next.lowRpmFor
+    ride.lean = next.lean
     if (ride.shiftKick !== 0) {
       const left = Math.abs(ride.shiftKick) - dt / KICK_S
       ride.shiftKick = left <= 0 ? 0 : Math.sign(ride.shiftKick) * left
