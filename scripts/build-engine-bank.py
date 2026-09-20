@@ -51,17 +51,36 @@ class Track:
     valid: np.ndarray
 
 
+# freesound가 기본 urllib UA를 거부할 때를 대비한 브라우저 UA
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/128 Safari/537.36"
+
+
+def write_ogg(path: str, y: np.ndarray) -> None:
+    """OGG/Vorbis로 저장한다. libsndfile에 Vorbis가 없으면 원인을 알리는 오류로 바꾼다."""
+    try:
+        sf.write(path, y.astype(np.float32), SR_OUT, format="OGG", subtype="VORBIS", compression_level=VORBIS_LEVEL)
+    except (RuntimeError, sf.LibsndfileError, ValueError) as e:  # type: ignore[attr-defined]
+        raise SystemExit(f"{path}: OGG/Vorbis 인코딩 실패 — libsndfile이 Vorbis를 지원하는지 확인 ({e})") from e
+
+
 def ensure_input(path: str, sound_id: int) -> str:
     """입력 mp3가 없으면 freesound 페이지에서 HQ 미리듣기 링크를 긁어 내려받는다."""
     if os.path.exists(path):
         return path
-    page = urllib.request.urlopen(f"https://freesound.org/s/{sound_id}/", timeout=30).read().decode("utf8", "replace")
+    # 기본 UA(Python-urllib)는 봇 필터에 막히므로 브라우저 UA를 붙인다
+    def _get(url: str) -> bytes:
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return r.read()
+
+    page = _get(f"https://freesound.org/s/{sound_id}/").decode("utf8", "replace")
     m = re.search(r"https://cdn\.freesound\.org/previews/\d+/%d_[\w-]*hq\.mp3" % sound_id, page)
     if not m:
         raise RuntimeError(f"{sound_id}: HQ 미리듣기 링크를 찾지 못했다")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     print(f"  내려받는 중: {m.group(0)}")
-    urllib.request.urlretrieve(m.group(0), path)
+    with open(path, "wb") as f:
+        f.write(_get(m.group(0)))
     return path
 
 
@@ -465,8 +484,7 @@ def main(argv=None) -> int:
             print(f"! {target} rpm 제외: 실측 {got:.0f} rpm이 ±{PICK_TOL:.0%}를 벗어났다")
             continue
         name = f"{target}.ogg"
-        sf.write(os.path.join(args.outdir, name), y.astype(np.float32), SR_OUT,
-                 format="OGG", subtype="VORBIS", compression_level=VORBIS_LEVEL)
+        write_ogg(os.path.join(args.outdir, name), y)
         loops.append({"rpm": int(round(got / 10.0) * 10), "file": name})
         info["wobble"] = wob
         rows.append((target, got, where, info, method))
@@ -475,8 +493,7 @@ def main(argv=None) -> int:
     shots = extract_oneshots(src[DEFAULT_SOURCE][0], SR_OUT, src[DEFAULT_SOURCE][1])
     for key, fade in (("start", 0.05), ("stop", 0.1)):
         y, t0, dur, lim = shots[key]
-        sf.write(os.path.join(args.outdir, f"{key}.ogg"), y.astype(np.float32), SR_OUT,
-                 format="OGG", subtype="VORBIS", compression_level=VORBIS_LEVEL)
+        write_ogg(os.path.join(args.outdir, f"{key}.ogg"), y)
         print(f"{key}.ogg: {DEFAULT_SOURCE} @{t0:.2f}s, {len(y) / SR_OUT:.2f}s, 페이드아웃 {fade * 1000:.0f} ms"
               + (f", 리미팅 적용(정규화 직후 피크 {lim:+.1f} dBFS)" if lim else ""))
         plots.append((f"{key}.ogg", y, 0.0))
