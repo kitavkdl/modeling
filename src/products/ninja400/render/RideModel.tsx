@@ -1,4 +1,4 @@
-import { Component, Suspense, useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { Component, Suspense, useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { useGLTF } from '@react-three/drei'
 import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
@@ -7,6 +7,7 @@ import type { AssemblyStore } from '../../../engine/store'
 import { isAssemblyHidden } from '../../../engine/store'
 import { frontWheelRpm, wheelRpm } from '../finale/rideModel'
 import { ride } from '../finale/rideState'
+import { refine, refineRevealed, registerRealModel, subscribeRefine } from './Refine'
 
 // 완성차 실물 모델(ZX-6R, CC-BY). scripts/prepare-ride-model.mjs가 저장소 좌표계로 구워 둔
 // ride.glb를 그대로 놓는다 — 좌표·스케일 보정이 없다. 키가 마지막 하나로 남는 순간
@@ -70,7 +71,11 @@ export function markRideModelReady(store?: AssemblyStore): void {
 export function RideModel() {
   const product = useProduct()
   const store = useAssemblyStore()
-  const visible = useAssembly((s) => isAssemblyHidden(product, s))
+  const hidden = useAssembly((s) => isAssemblyHidden(product, s))
+  // 스윕(전문가의 손길) 동안에는 절차 조립체가 아직 남아 있어 assemblyHidden이 false다.
+  // 그래도 실물 모델은 이미 서 있어야 한다 — 칼날 뒤쪽 절반이 이쪽이다.
+  const sweeping = useSyncExternalStore(subscribeRefine, () => refine.active, () => false)
+  const visible = hidden || sweeping
   return (
     <RideModelBoundary store={store}>
       <Suspense fallback={null}>
@@ -85,6 +90,7 @@ function RideScene({ visible }: { visible: boolean }) {
   const { scene } = useGLTF(URL)
   const start = useRef(0)
   const fading = useRef(true)
+  const root = useRef<THREE.Group>(null)
 
   // 재질은 원본 하나당 한 번만 clone해서 그 재질을 쓰는 메시 전부에 물린다 — useGLTF 캐시가 준
   // 원본을 직접 건드리면 다음 로드가 반투명해지고, 메시마다 clone하면 같은 재질이 수십 개로 불어난다.
@@ -114,6 +120,10 @@ function RideScene({ visible }: { visible: boolean }) {
     }
   }, [scene])
 
+  // 스윕(Refine)이 물릴 재질을 넘긴다. 등록 자체가 '디코드가 끝났다'는 신호이므로
+  // markRideModelReady보다 **먼저** 건다 — 스토어를 깨우는 쪽이 뒤여야 조건 검사에 빠짐이 없다.
+  useEffect(() => registerRealModel({ materials }), [materials])
+
   // 여기까지 렌더됐다는 것은 Suspense가 풀렸다는 것 — 디코드가 끝났다.
   useEffect(() => {
     markRideModelReady(store)
@@ -130,6 +140,18 @@ function RideScene({ visible }: { visible: boolean }) {
   // 켜 둔 채면 아직 안 보이는 차체가 깊이만 써서 뒤의 바닥에 차 모양 구멍이 뚫린다.
   useEffect(() => {
     if (!visible) return
+    // 스윕이 드러내 주는 경우엔 페이드하지 않는다 — 칼날 뒤쪽은 처음부터 불투명해야
+    // '거친 조립체가 실물로 바뀐다'로 읽힌다. 반투명하면 두 차가 겹쳐 보인다.
+    if (refineRevealed()) {
+      fading.current = false
+      for (const m of materials) {
+        m.transparent = false
+        m.opacity = 1
+        m.depthWrite = true
+        m.needsUpdate = true
+      }
+      return
+    }
     start.current = 0
     fading.current = true
     for (const m of materials) {
@@ -159,6 +181,12 @@ function RideScene({ visible }: { visible: boolean }) {
       }
     }
 
+    // 기울기: 접지선을 축으로 굴린다. 모델 원점이 이미 지면(y = 0)이라 그룹을 그대로 x축으로 돌리면
+    // 회전축이 접지선을 지난다. 오른손 법칙으로 +x 둘레 양의 회전은 (0,1,0)을 (0,cosθ,sinθ)로 보내
+    // 차 위쪽을 +z(차 오른쪽)로 끌어간다 — 즉 오른쪽으로 눕는 것이 **양의** 회전이다.
+    // ride.lean도 + = 오른쪽이므로 부호를 그대로 쓴다.
+    if (root.current) root.current.rotation.x = ride.lean
+
     if (ride.speed === 0) return
     // +x가 앞, +z가 오른쪽이면 +z 둘레 양의 회전은 바퀴 위쪽을 뒤로 민다(오른손 법칙:
     // 위 (0,r) → (−r dθ, 0)). 앞으로 굴러가려면 음의 회전이다 — RideParts의 Spinner와 같은 부호.
@@ -167,7 +195,7 @@ function RideScene({ visible }: { visible: boolean }) {
   })
 
   return (
-    <group visible={visible}>
+    <group ref={root} visible={visible}>
       <primitive object={scene} />
     </group>
   )

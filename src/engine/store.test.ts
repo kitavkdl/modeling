@@ -9,6 +9,7 @@ import {
   createAssemblyStore,
   isAssemblyComplete,
   isAssemblyHidden,
+  isFloorHidden,
   isStationSeated,
   stationOffset,
   validateProduct,
@@ -388,6 +389,18 @@ describe('isAssemblyHidden', () => {
     expect(isAssemblyHidden(hidden, store.getState())).toBe(true)
     expect(seen[seen.length - 1].mounted['c']).toBeDefined()
     expect(seen.map((s) => s.phase)).toContain('assembly')
+  })
+})
+
+describe('isFloorHidden', () => {
+  it('훅이 없으면 숨기지 않는다', () => {
+    expect(isFloorHidden(product, { phase: 'running', mounted: {} })).toBe(false)
+  })
+
+  it('제품이 올리면 그 단계에서만 숨긴다', () => {
+    const withHook: ProductDef = { ...product, floorHidden: (s) => s.phase === 'running' }
+    expect(isFloorHidden(withHook, { phase: 'running', mounted: {} })).toBe(true)
+    expect(isFloorHidden(withHook, { phase: 'assembly', mounted: {} })).toBe(false)
   })
 })
 

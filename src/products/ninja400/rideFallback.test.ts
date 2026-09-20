@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Mounted } from '../../engine/types'
 import { ninja400Product } from './index'
 import { PARTS } from './parts'
+import { refine } from './render/Refine'
 import { markRideModelFailed, markRideModelReady, rideModelFailed, rideModelReady } from './render/RideModel'
 
 /** 키를 뺀 모든 부품을 장착한 표 */
@@ -23,13 +24,25 @@ describe('실물 모델이 설 수 있을 때만 조립체를 감춘다 (스펙 
     expect(ninja400Product.assemblyHidden!({ phase: 'keyed', mounted: {} })).toBe(false)
   })
 
-  it('디코드가 끝나면 키만 남을 때 조립체를 감춘다', () => {
+  it('디코드가 끝나도 전문가의 손길(스윕) 전에는 조립체를 감추지 않는다', () => {
     markRideModelReady()
     expect(rideModelReady()).toBe(true)
-    expect(ninja400Product.assemblyHidden!({ phase: 'assembly', mounted: allButKey() })).toBe(true)
+    expect(refine.done).toBe(false)
+    // 스윕이 도는 동안에는 두 차가 칼날을 경계로 반씩 보여야 한다 — 절차 조립체가 살아 있어야 한다
+    expect(ninja400Product.assemblyHidden!({ phase: 'assembly', mounted: allButKey() })).toBe(false)
+    // 단계가 넘어갔다는 것은 키가 이미 꽂혔다는 뜻이다 — 그때는 스윕과 무관하게 실물 모델만 남는다
     expect(ninja400Product.assemblyHidden!({ phase: 'keyed', mounted: {} })).toBe(true)
-    // 아직 남은 부품이 있으면 그대로 조립을 보여 준다
-    expect(ninja400Product.assemblyHidden!({ phase: 'assembly', mounted: {} })).toBe(false)
+  })
+
+  it('스윕이 끝나면 키만 남을 때 조립체를 감춘다', () => {
+    refine.done = true
+    try {
+      expect(ninja400Product.assemblyHidden!({ phase: 'assembly', mounted: allButKey() })).toBe(true)
+      // 아직 남은 부품이 있으면 그대로 조립을 보여 준다
+      expect(ninja400Product.assemblyHidden!({ phase: 'assembly', mounted: {} })).toBe(false)
+    } finally {
+      refine.done = false
+    }
   })
 
   it('키는 조립체를 감춘 뒤에도 그린다', () => {

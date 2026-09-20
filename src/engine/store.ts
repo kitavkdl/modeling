@@ -94,6 +94,15 @@ export function isAssemblyHidden(product: ProductDef, s: { phase: Phase; mounted
 }
 
 /**
+ * 제품이 기본 바닥을 숨기라고 하는가 (ProductDef.floorHidden). 훅이 없으면 숨기지 않는다.
+ * 제품이 자기 바닥(주행 타일 등)을 깔면 두 평면이 0.0025 units 차이로 겹쳐 z-파이팅이 난다 —
+ * 그때는 기본 바닥을 아예 빼는 것이 깊이 밀어내기보다 확실하다.
+ */
+export function isFloorHidden(product: ProductDef, s: { phase: Phase; mounted: Mounted }): boolean {
+  return product.floorHidden?.({ phase: s.phase, mounted: s.mounted }) ?? false
+}
+
+/**
  * 조립체가 숨겨진 상태에서도 그릴 부품만 남긴다 (제품의 alwaysVisibleParts).
  * 숨기지 않았으면 받은 목록 그대로다.
  */

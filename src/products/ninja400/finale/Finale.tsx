@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useAssembly, useAssemblyStore } from '../../../engine/context'
 import { requestCameraView } from '../../../engine/scene/controlsRef'
 import * as engineSound from '../audio/engineSound'
+import { RefineSweep } from '../render/Refine'
 import { preloadRideModel, RideModel } from '../render/RideModel'
 import { IGNITION } from '../render/rideLayout'
 import { RideFog, RoadTiles } from '../render/RoadTiles'
@@ -26,6 +27,8 @@ export function NinjaFinale() {
   return (
     <>
       <RideModel />
+      {/* 조립 중에도 떠 있어야 한다 — 스윕 시작 조건(키만 남음)이 assembly 단계 안에서 걸린다 */}
+      <RefineSweep />
       <Starter />
       <Throttle />
       <RideControls />

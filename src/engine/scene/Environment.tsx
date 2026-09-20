@@ -1,5 +1,6 @@
 import { ContactShadows, Environment, Lightformer } from '@react-three/drei'
-import { useProduct } from '../context'
+import { useAssembly, useProduct } from '../context'
+import { isFloorHidden } from '../store'
 import { MM } from '../types'
 
 // 조명: 키라이트 1 + 림라이트 1 + 약한 환경광. 그 이상 두지 않는다.
@@ -41,16 +42,37 @@ export function Lights() {
 }
 
 // 바닥: 무한 평면 + 접촉 그림자. 반사 없음.
+//
+// 제품이 이 위에 자기 바닥을 깔면(닌자 400의 주행 타일, y = +0.0005 units = +0.005 mm) 두 평면이
+// 0.0025 units(= 0.025 mm)밖에 안 떨어져 있다. near 0.5 / far 4200 units의 깊이 버퍼는 2000~4000 units
+// (20~40 m) 거리에서 이만큼을 구분하지 못해, 이 평면이 덮는 ±1000 units(±10 m) 안쪽에서만 타일이 지고
+// 바깥에는 남는다 — 화면에 20 m짜리 '네모칸'이 생긴다. 그래서 두 가지를 같이 건다:
+//   1) polygonOffset으로 이 평면을 깊이 방향으로 밀어낸다 (제품 바닥이 없을 때도 안전한 일반 조치)
+//   2) 제품이 floorHidden을 올리면 아예 그리지 않는다 — 밀어내기만으로는 스치는 각도에서
+//      이 평면의 색이 여전히 배어 나온다
+// 접촉 그림자는 두 경우 모두 그린다. 높이 순서는 기본 바닥(−0.002) < 타일(+0.0005) < 그림자(+0.001)라
+// 그림자가 타일 위에 남는다 — 여기서 바꿀 것이 없다.
 export function Floor() {
-  const { contactShadowSizeMm, shadowBoundsMm } = useProduct().environment
+  const product = useProduct()
+  const { contactShadowSizeMm, shadowBoundsMm } = product.environment
+  const hidden = useAssembly((s) => isFloorHidden(product, s))
   const [w, d] = contactShadowSizeMm
   const r = shadowBoundsMm * MM
   return (
     <>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.002, 0]} receiveShadow>
-        <planeGeometry args={[2000, 2000]} />
-        <meshStandardMaterial color="#0d0d0f" metalness={0} roughness={1} />
-      </mesh>
+      {hidden ? null : (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.002, 0]} receiveShadow>
+          <planeGeometry args={[2000, 2000]} />
+          <meshStandardMaterial
+            color="#0d0d0f"
+            metalness={0}
+            roughness={1}
+            polygonOffset
+            polygonOffsetFactor={4}
+            polygonOffsetUnits={4}
+          />
+        </mesh>
+      )}
       <ContactShadows
         position={[0, 0.001, 0]}
         width={w * MM}

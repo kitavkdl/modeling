@@ -296,6 +296,10 @@ body,
 .select-ko { font-size: 12px; opacity: 0.75; }
 .select-meta { margin-top: 10px; font-size: 11px; color: var(--fg-dim); letter-spacing: 0.04em; }
 
+/* --- 전문가의 손길 --------------------------------------------------------- */
+/* 스윕이 도는 6초 동안만 계기 위에 뜨는 한 줄. 힌트와 같은 톤이다 */
+.refine-note { font-size: 13px; letter-spacing: 0.02em; color: var(--fg); }
+
 /* --- Ride gauge ----------------------------------------------------------- */
 /* 아날로그 회전계. 0~13(×1000 rpm)을 240°(−120°~+120°)로 훑고, 0이 좌하·13이 우하다.
    바늘은 리액트 밖에서 rAF로 transform만 덮어쓰므로 CSS transition을 걸지 않는다. */

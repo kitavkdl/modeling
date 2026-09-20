@@ -180,6 +180,11 @@ export interface ProductDef {
   /** assemblyHidden이 true여도 계속 그릴 부품 id (예: 실물 모델에 꽂는 키) */
   alwaysVisibleParts?: string[]
   /**
+   * true면 엔진이 기본 바닥 평면을 그리지 않는다 (제품이 그 위에 자기 바닥을 깔 때).
+   * 접촉 그림자는 계속 그린다 — 바닥이 제품 것으로 바뀔 뿐 차가 떠 보이면 안 된다.
+   */
+  floorHidden?: (s: { phase: string; mounted: Mounted }) => boolean
+  /**
    * 외부 에셋 출처 표기(라이선스 의무). assembly 이후 단계에서 HUD 왼쪽 아래에 한 줄로 이어 그린다.
    * href가 있으면 새 탭 링크가 된다 — 엔진은 문자열과 주소만 알고 제품을 모른다.
    */
