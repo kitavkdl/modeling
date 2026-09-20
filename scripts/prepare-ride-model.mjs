@@ -450,6 +450,15 @@ async function run(tex) {
   const allBox = emptyBox()
   for (const it of items) for (const p of it.pts) growBox(allBox, p.map(toMm))
 
+  // Sketchfab 내보내기는 재질 4개 전부 alphaMode BLEND라 three가 depthWrite를 끄고 반투명으로 그린다 —
+  // 차체가 뒤에 그려지는 바닥에 덮이고 정렬이 깨진다. 실제 반투명 부위가 없으므로 전부 OPAQUE로 고정한다.
+  for (const mat of doc.getRoot().listMaterials()) {
+    if (mat.getAlphaMode() !== 'OPAQUE') {
+      console.log(`  재질 ${mat.getName()}: ${mat.getAlphaMode()} → OPAQUE`)
+      mat.setAlphaMode('OPAQUE')
+    }
+  }
+
   // 압축 후 쓰기
   await MeshoptEncoder.ready
   await doc.transform(

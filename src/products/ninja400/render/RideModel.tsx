@@ -65,6 +65,8 @@ function RideScene() {
       const hit = byOriginal.get(m)
       if (hit) return hit
       const c = m.clone()
+      // 원본이 BLEND로 내보내졌어도 차체는 불투명이다 — depthWrite가 꺼진 채면 뒤에 그려지는 바닥이 차체를 덮는다
+      c.depthWrite = true
       byOriginal.set(m, c)
       return c
     }
