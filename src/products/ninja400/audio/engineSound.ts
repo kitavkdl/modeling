@@ -249,9 +249,13 @@ function playOneShot(buf: AudioBuffer | null | undefined) {
  */
 function retire(slot: Slot, now: number) {
   const g = slot.gain.gain
-  g.cancelScheduledValues(now)
-  g.setValueAtTime(g.value, now)
-  g.linearRampToValueAtTime(0.0001, now + SLOT_FADE_S)
+  try {
+    g.cancelScheduledValues(now)
+    g.setValueAtTime(g.value, now)
+    g.linearRampToValueAtTime(0.0001, now + SLOT_FADE_S)
+  } catch {
+    /* 진행 중인 setValueCurve를 자르지 못하는 브라우저 — 페이드 없이 바로 멈춘다 */
+  }
   slot.src.onended = () => {
     slot.src.disconnect()
     slot.gain.disconnect()

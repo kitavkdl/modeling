@@ -220,7 +220,7 @@ def precise_f0(x: np.ndarray, hint_hz: float, sr: int = SR_OUT, span: float = F0
 
 def pitch_frames(y: np.ndarray, f0: float, sr: int = SR_OUT, frame_s: float = RES_FRAME_S,
                  hop_s: float = RES_HOP_S) -> tuple[np.ndarray, np.ndarray]:
-    """프레임별 f0 (프레임 한가운데 시각 s, Hz). 창은 적어도 8 점화 주기를 담는다."""
+    """프레임별 f0 (프레임 한가운데 시각 s, Hz). 창은 적어도 RES_MIN_CYCLES(20) 점화 주기를 담는다 — 8이면 22 Hz에서 측정 잡음이 1%다."""
     frame = max(int(frame_s * sr), int(round(RES_MIN_CYCLES * sr / max(f0, 1e-6))))
     hop = max(1, int(hop_s * sr))
     ts, fs = [], []

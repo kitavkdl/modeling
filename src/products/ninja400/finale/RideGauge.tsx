@@ -45,9 +45,12 @@ function point(k: number, radius: number): [number, number] {
 
 const f2 = (v: number) => Math.round(v * 100) / 100
 
+/** 레드존 시작 눈금(×1000 rpm) — 리미터에서 파생한다 */
+const REDLINE_K = REDLINE / 1000
+
 /** 레드존(12~13) 호를 그리는 path. 240° 중 한 칸(18.5°)이라 큰 호 플래그는 0 */
 function redArc(): string {
-  const [x0, y0] = point(12, R_OUT)
+  const [x0, y0] = point(REDLINE_K, R_OUT)
   const [x1, y1] = point(DIAL_MAX_K, R_OUT)
   return `M ${f2(x0)} ${f2(y0)} A ${R_OUT} ${R_OUT} 0 0 1 ${f2(x1)} ${f2(y1)}`
 }
@@ -124,7 +127,7 @@ export function RideGauge() {
           return (
             <g key={`M${k}`}>
               <line
-                className={k >= 12 ? 'gauge-tick-major over' : 'gauge-tick-major'}
+                className={k >= REDLINE_K ? 'gauge-tick-major over' : 'gauge-tick-major'}
                 x1={f2(x1)}
                 y1={f2(y1)}
                 x2={f2(x2)}
