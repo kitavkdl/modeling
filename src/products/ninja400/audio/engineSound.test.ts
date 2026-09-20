@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { blip, loopGains, preload, safeRpm, setLoad, setRpm, setThrottle, start, stop, toneFor } from './engineSound'
+import { blip, loopGains, preload, safeRpm, setLoad, setRpm, setThrottle, start, stop, stopPlan, toneFor } from './engineSound'
 
 // v3는 실녹음 루프를 재생한다. 오디오 그래프는 노드 환경(window 없음)에서 만들어지지 않으므로
-// 여기서는 순수 함수와 "무슨 순서로 불러도 터지지 않는다"는 계약만 확인한다.
+// 값을 정하는 순수 함수만 여기서 못박는다. 슬롯 상태 기계는 slotPlan.test.ts가 맡는다.
 
 describe('회전수 정리', () => {
   it('유한하지 않거나 0 이하면 0 — playbackRate가 0이 될 수 없어 루프를 내려야 한다', () => {
@@ -47,22 +47,37 @@ describe('루프 크로스페이드 게인', () => {
   })
 })
 
-describe('공개 API 계약', () => {
-  it('start() 없이 부르는 stop()은 아무 일도 하지 않는다', () => {
-    expect(() => stop()).not.toThrow()
+describe('stop()의 멱등성', () => {
+  it('돌고 있지 않으면 페이드도 원샷도 suspend 예약도 없다', () => {
+    // 스톨 때 RideControls가 한 번, running에서 빠져나갈 때 Finale이 또 한 번 부른다.
+    // 두 번째 호출이 stop.ogg를 다시 울리면 정지음이 두 번 난다.
+    expect(stopPlan(false, 1.2)).toEqual({ fade: false, oneShot: false, suspendAfterS: 0 })
+    // 시동 전(preload가 컨텍스트만 만들어 둔 상태)에 부르는 stop()도 같은 자리에 걸린다
+    expect(stopPlan(false, 0)).toEqual({ fade: false, oneShot: false, suspendAfterS: 0 })
   })
-  it('오디오가 없는 환경에서도 전부 무음으로 넘어간다', () => {
-    expect(() => {
-      start()
-      setRpm(NaN)
-      setThrottle(NaN)
-      setLoad(NaN)
-      blip()
-      stop()
-      stop()
-    }).not.toThrow()
+  it('돌고 있으면 페이드·원샷을 걸고 stop.ogg가 끝날 때까지 기다렸다 재운다', () => {
+    const p = stopPlan(true, 1.2)
+    expect(p.fade).toBe(true)
+    expect(p.oneShot).toBe(true)
+    // 0.15(페이드) + 0.03(슬롯) = 0.18보다 stop.ogg가 길다 → 원샷 길이가 기준이 된다
+    expect(p.suspendAfterS).toBeCloseTo(1.25, 10)
   })
-  it('preload()는 오디오가 없으면 조용히 resolve하고 같은 약속을 돌려준다', async () => {
+  it('원샷이 없거나 짧으면 페이드 길이가 기준이 된다', () => {
+    expect(stopPlan(true, 0).suspendAfterS).toBeCloseTo(0.23, 10)
+    expect(stopPlan(true, 0.1).suspendAfterS).toBeCloseTo(0.23, 10)
+  })
+})
+
+describe('오디오가 없는 환경', () => {
+  it('전 API가 무음으로 넘어가고 preload()는 같은 약속을 돌려준다', async () => {
+    stop() // start() 전에 불러도 무해해야 한다
+    start()
+    setRpm(NaN)
+    setThrottle(NaN)
+    setLoad(NaN)
+    blip()
+    stop()
+    stop()
     const first = preload()
     expect(preload()).toBe(first)
     await expect(first).resolves.toBeUndefined()

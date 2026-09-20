@@ -24,7 +24,7 @@ const ONE: Mix = { lower: 0, upper: 0, t: 0 }
 export function bankMix(rpm: number, loops: Loop[]): Mix {
   const n = loops.length
   if (n === 0) return { ...ONE }
-  // 비유한(NaN·Infinity) rpm은 최저 루프로 본다 — 무음으로 떨어지는 대신 아이들로 버틴다
+  // 비유한 rpm은 +Infinity까지 모두 최저 루프로 본다 — 계산이 깨졌을 때 고회전으로 비명을 지르는 것보다 아이들이 안전하다
   const r = Number.isFinite(rpm) ? rpm : loops[0].rpm
   if (r <= loops[0].rpm) return { ...ONE }
   const last = n - 1

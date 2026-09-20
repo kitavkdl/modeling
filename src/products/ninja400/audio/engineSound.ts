@@ -11,6 +11,7 @@
 
 import { IDLE_RPM } from '../finale/rideModel'
 import { bankMix, type Loop } from './bankMix'
+import { planSlots, type SlotHeld } from './slotPlan'
 
 /** 뱅크가 놓인 곳 (Vite가 public/ 그대로 복사한다) */
 const BANK_DIR = '/audio/ninja400/engine/'
@@ -23,6 +24,10 @@ const STOP_FADE_S = 0.15
 /** start.ogg가 점화에 닿는 시점(초)과 루프 페이드인 길이(초) */
 const START_DELAY_S = 0.8
 const START_FADE_S = 0.3
+/** 정지 페이드가 남아 있을 때 시동을 걸면 버스를 0으로 끌어내리는 시간 (초) — 0으로 점프하면 딸깍한다 */
+const BUS_DROP_S = 0.02
+/** stop() 뒤 컨텍스트를 재우기 전 여유 (초) */
+const SUSPEND_PAD_S = 0.05
 /** 슬롯을 갈아 끼울 때 옛 소스를 지우는 시간 (초) */
 const SLOT_FADE_S = 0.03
 /** playbackRate·슬롯 게인 시정수(초)와 톤(lowpass·게인) 시정수(초) */
@@ -56,6 +61,16 @@ export function toneFor(throttle: number, load: number): { lowpassHz: number; ga
     lowpassHz: TONE_HZ_BASE + TONE_HZ_SPAN * th,
     gain: dbToGain(TONE_DB_BASE + TONE_DB_THROTTLE * th + TONE_DB_LOAD * clamp01(load)),
   }
+}
+
+/**
+ * stop()이 실제로 할 일. 돌고 있지 않으면 전부 아니오 — 두 번째 stop()은 소리도 예약도 남기지 않는다.
+ * (스톨 때 RideControls가 한 번, running에서 빠져나갈 때 Finale이 또 한 번 부른다)
+ */
+export function stopPlan(running: boolean, stopSoundS: number): { fade: boolean; oneShot: boolean; suspendAfterS: number } {
+  if (!running) return { fade: false, oneShot: false, suspendAfterS: 0 }
+  // stop.ogg가 끝나기 전에 재우면 잘린다 — 페이드와 원샷 중 긴 쪽을 기다린다
+  return { fade: true, oneShot: true, suspendAfterS: Math.max(STOP_FADE_S + SLOT_FADE_S, stopSoundS) + SUSPEND_PAD_S }
 }
 
 /** 등파워 크로스페이드 — 두 게인의 제곱합이 1이라 합쳐도 소리가 꺼지거나 부풀지 않는다 */
@@ -169,6 +184,18 @@ export function preload(): Promise<void> {
   return bankPromise
 }
 
+/** 진행 중인 loopBus 자동화를 지금 값에서 끊는다. cancelAndHoldAtTime이 없는 브라우저는 손으로 붙잡는다 */
+function holdLoopBus(now: number) {
+  const g = loopBus?.gain
+  if (!g) return
+  const hold = (g as AudioParam & { cancelAndHoldAtTime?: (t: number) => AudioParam }).cancelAndHoldAtTime
+  if (typeof hold === 'function') hold.call(g, now)
+  else {
+    g.cancelScheduledValues(now)
+    g.setValueAtTime(g.value, now)
+  }
+}
+
 /** 원샷(시동·정지)은 톤을 거치지 않고 master로 바로 간다 */
 function playOneShot(buf: AudioBuffer | null | undefined) {
   const ac = ctx
@@ -180,7 +207,11 @@ function playOneShot(buf: AudioBuffer | null | undefined) {
   src.start()
 }
 
-/** 옛 소스를 30 ms에 걸쳐 지우고 끊는다 */
+/**
+ * 옛 소스를 30 ms에 걸쳐 지우고 끊는다.
+ * 붙잡는 값 `g.value`는 호출 시점(ctx.currentTime)의 값이다 — tick에서는 now가 바로 지금이라 정확하고,
+ * stop()이 now+STOP_FADE_S로 미뤄 부를 때는 살짝 낡은 값이지만 그때는 loopBus가 이미 0에 가깝다.
+ */
 function retire(slot: Slot, now: number) {
   const g = slot.gain.gain
   g.cancelScheduledValues(now)
@@ -244,23 +275,23 @@ function tick() {
     return
   }
   const mix = bankMix(rpmLevel, loops)
-  const want: Array<number | null> = [mix.lower, mix.upper === mix.lower ? null : mix.upper]
-  // 구간을 넘어갈 때 반대편 슬롯이 이미 그 루프를 돌리고 있으면 자리만 바꾼다 (다시 켜면 위상이 튄다)
-  const [a, b] = slots
-  if ((b && b.index === want[0]) || (a && want[1] !== null && a.index === want[1])) {
-    slots[0] = b
+  const held: SlotHeld = [slots[0]?.index ?? null, slots[1]?.index ?? null]
+  const plan = planSlots(held, mix)
+  if (plan.swap) {
+    const a = slots[0]
+    slots[0] = slots[1]
     slots[1] = a
   }
   const g = loopGains(mix.t)
   const target = [g.lower, g.upper]
   for (let i = 0; i < 2; i++) {
-    const index = want[i]
-    if (index === null) {
+    const action = plan.actions[i]
+    if (action.kind === 'release') {
       releaseSlot(i, now)
       continue
     }
-    const rate = rpmLevel / loops[index].rpm
-    if (slots[i]?.index !== index) startSlot(i, index, rate, now)
+    const rate = rpmLevel / loops[action.index].rpm
+    if (action.kind === 'start') startSlot(i, action.index, rate, now)
     const slot = slots[i]
     if (!slot) continue
     slot.src.playbackRate.setTargetAtTime(rate, now, RATE_TAU)
@@ -271,16 +302,14 @@ function tick() {
 /** 시동. 두 번 불러도 겹치지 않는다. start.ogg를 울리고 0.8초 뒤부터 루프를 0.3초에 걸쳐 올린다 */
 export function start(): void {
   const ac = ensureContext()
-  if (!ac || !master || !loopBus) return
+  if (!ac || !loopBus) return
   void preload()
   if (suspendTimer !== null) {
     clearTimeout(suspendTimer)
     suspendTimer = null
   }
-  const now = ac.currentTime
-  master.gain.cancelScheduledValues(now)
-  master.gain.setValueAtTime(MASTER_GAIN, now)
   if (timer !== null) return
+  const now = ac.currentTime
   level = 0
   loadLevel = 0
   // 바깥에서 setRpm이 오기 전까지는 아이들로 돈다
@@ -288,8 +317,10 @@ export function start(): void {
   blipUntil = 0
   if (!bank) warnOnce('cold', '뱅크가 아직 준비되지 않았다 — 디코드가 끝나면 소리가 붙는다')
   playOneShot(bank?.start)
-  loopBus.gain.cancelScheduledValues(now)
-  loopBus.gain.setValueAtTime(0, now)
+  // 정지 페이드가 아직 돌고 있을 수 있다. 현재 값을 붙잡고 20 ms에 걸쳐 0으로 내린 뒤 예약을 건다 —
+  // 곧바로 0을 찍으면 딸깍한다. 꺼져 있던 상태면 0 → 0이라 아무 일도 일어나지 않는다.
+  holdLoopBus(now)
+  loopBus.gain.linearRampToValueAtTime(0, now + BUS_DROP_S)
   loopBus.gain.setValueAtTime(0, now + START_DELAY_S)
   loopBus.gain.linearRampToValueAtTime(1, now + START_DELAY_S + START_FADE_S)
   tick()
@@ -327,30 +358,31 @@ export function blip(): void {
   toneGain.gain.linearRampToValueAtTime(base, blipUntil)
 }
 
-/** 정지. 루프를 0.15초에 걸쳐 내리고 stop.ogg를 울린 뒤 컨텍스트를 재운다 */
+/**
+ * 정지. 루프를 0.15초에 걸쳐 내리고 stop.ogg를 울린 뒤 컨텍스트를 재운다.
+ * 돌고 있을 때만 그렇게 한다 — 두 번째 stop()은 조용한 no-op이다(stopPlan 참조).
+ */
 export function stop(): void {
   level = 0
   rpmLevel = 0
   loadLevel = 0
+  const plan = stopPlan(timer !== null, bank?.stop?.duration ?? 0)
   if (timer !== null) {
     clearInterval(timer)
     timer = null
   }
   const ac = ctx
-  if (!ac || !loopBus) return
+  if (!ac || !loopBus || !plan.fade) return
   const now = ac.currentTime
   blipUntil = 0
-  loopBus.gain.cancelScheduledValues(now)
-  loopBus.gain.setValueAtTime(loopBus.gain.value, now)
+  holdLoopBus(now)
   loopBus.gain.linearRampToValueAtTime(0.0001, now + STOP_FADE_S)
   releaseSlot(0, now + STOP_FADE_S)
   releaseSlot(1, now + STOP_FADE_S)
-  playOneShot(bank?.stop)
-  // stop.ogg가 끝나기 전에 재우면 잘린다 — 페이드와 원샷 중 긴 쪽을 기다린다
-  const waitS = Math.max(STOP_FADE_S + SLOT_FADE_S, bank?.stop?.duration ?? 0) + 0.05
+  if (plan.oneShot) playOneShot(bank?.stop)
   if (suspendTimer !== null) clearTimeout(suspendTimer)
   suspendTimer = setTimeout(() => {
     suspendTimer = null
     void ac.suspend()
-  }, waitS * 1000)
+  }, plan.suspendAfterS * 1000)
 }
