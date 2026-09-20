@@ -177,8 +177,13 @@ export interface ProductDef {
    * 선택 부품의 고스트와 드래그는 그대로 살아 있다 — 숨긴 상태에서도 부품을 꽂을 수 있어야 한다.
    */
   assemblyHidden?: (s: { phase: string; mounted: Mounted }) => boolean
-  /** 외부 에셋 출처 표기(라이선스 의무). assembly 이후 단계에서 HUD 왼쪽 아래에 그대로 보여 준다 */
-  credits?: string
+  /** assemblyHidden이 true여도 계속 그릴 부품 id (예: 실물 모델에 꽂는 키) */
+  alwaysVisibleParts?: string[]
+  /**
+   * 외부 에셋 출처 표기(라이선스 의무). assembly 이후 단계에서 HUD 왼쪽 아래에 한 줄로 이어 그린다.
+   * href가 있으면 새 탭 링크가 된다 — 엔진은 문자열과 주소만 알고 제품을 모른다.
+   */
+  credits?: Array<{ text: string; href?: string }>
 }
 
 const MAX_DEPTH = 4

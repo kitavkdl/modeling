@@ -109,15 +109,28 @@ body,
   gap: 8px;
 }
 
-/* 외부 에셋 출처 한 줄 (라이선스 의무). 조립이 끝난 뒤 단계에서만 보인다 */
+/* 외부 에셋 출처 한 줄 (라이선스 의무). 조립이 끝난 뒤 단계에서만 보인다.
+   아래 28px은 부품 트레이 자리이므로 힌트·계기와 같은 높이(196px)에 왼쪽으로 붙인다.
+   힌트는 가운데 정렬이라 가로로 겹치지 않게 폭을 32vw로 묶었다 (두 줄로 접히면 위로 자란다). */
 .hud-credits {
   left: 32px;
-  bottom: 28px;
-  max-width: 44vw;
+  bottom: 196px;
+  max-width: 32vw;
   font-size: 11px;
   letter-spacing: 0.02em;
   line-height: 1.5;
   color: #8b8f98;
+}
+
+.hud-credits a {
+  pointer-events: auto;
+  color: inherit;
+  text-decoration: none;
+  transition: color 120ms;
+}
+
+.hud-credits a:hover {
+  color: var(--fg);
 }
 
 /* --- Buttons -------------------------------------------------------------- */

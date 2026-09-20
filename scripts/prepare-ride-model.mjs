@@ -271,11 +271,7 @@ async function run(tex) {
   // 자동 검출 앞/뒤
   let front = det.topA >= det.topB ? det.endA : det.endB
   let rear = front === det.endA ? det.endB : det.endA
-  let flippedByHeuristic = false
-  if (forceFlip) {
-    ;[front, rear] = [rear, front]
-    flippedByHeuristic = true
-  }
+  if (forceFlip) [front, rear] = [rear, front]
 
   // 이름 있는 노드와 교차검증 (원본 프레임에서 진행축 좌표로 비교)
   const frontNamed = boxOfNames(raw, ['front wheel', 'front rim'])
@@ -474,7 +470,7 @@ async function run(tex) {
     report,
     scaleMm,
     yawDeg: (yaw * 180) / Math.PI,
-    flippedByHeuristic,
+    flipForced: forceFlip,
     det,
     frontAxle,
     rearAxle,
@@ -492,13 +488,15 @@ async function run(tex) {
 }
 
 await MeshoptEncoder.ready
+const texForced = argv.includes('--tex')
 let tex = Number(opt('tex', 2048))
 let info = await run(tex)
-if (info.bytes > SIZE_LIMIT && tex > 1024) {
+if (info.bytes > SIZE_LIMIT && !texForced && tex > 1024) {
   console.log(`\nglb ${(info.bytes / 1e6).toFixed(2)} MB > 12 MB — 텍스처를 1024로 내려 다시 굽는다.`)
   tex = 1024
   info = await run(tex)
 }
+const tooBig = info.bytes > SIZE_LIMIT
 
 // --- 출력 -------------------------------------------------------------------
 
@@ -543,7 +541,7 @@ export const RIDE_MODEL = {
 writeFileSync('src/products/ninja400/render/rideLayout.generated.ts', ts)
 
 console.log(`\n입력 ${src} · 메시 노드 ${info.nodeCount}개 · 접지 정점 ${info.det.lowCount}개`)
-console.log(`yaw ${info.yawDeg.toFixed(1)}° · 스케일 ${info.scaleMm.toFixed(2)} mm/unit · 텍스처 ${info.tex}px${info.flippedByHeuristic ? ' · --flip 적용' : ''}`)
+console.log(`yaw ${info.yawDeg.toFixed(1)}° · 스케일 ${info.scaleMm.toFixed(2)} mm/unit · 텍스처 ${info.tex}px${info.flipForced ? ' · --flip 적용' : ''}`)
 console.log('\n교차검증')
 for (const line of info.report) console.log(`  ${line}`)
 console.log(`\n액슬 (mm, 저장소 좌표) — 값 출처: ${info.axleSource}`)
@@ -560,3 +558,10 @@ console.log('\n랜드마크 (mm)')
 for (const [k, v] of Object.entries(rideJson.landmarksMm)) console.log(`  ${k.padEnd(12)} ${vec(v)}`)
 console.log(`\n${info.glbPath} ${(info.bytes / 1e6).toFixed(2)} MB (상한 12 MB)`)
 console.log(`${join(outDir, 'ride.json')} · src/products/ninja400/render/rideLayout.generated.ts 갱신`)
+if (tooBig) {
+  console.error(
+    `\nglb가 상한을 넘었다: ${(info.bytes / 1e6).toFixed(2)} MB > 12 MB (텍스처 ${tex}px` +
+      `${texForced ? ', --tex로 고정해 자동 축소를 건너뛰었다' : ', 1024까지 내려도 못 맞췄다'}). 커밋하지 마라.`,
+  )
+  process.exit(1)
+}

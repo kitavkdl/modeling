@@ -93,6 +93,16 @@ export function isAssemblyHidden(product: ProductDef, s: { phase: Phase; mounted
   return product.assemblyHidden?.({ phase: s.phase, mounted: s.mounted }) ?? false
 }
 
+/**
+ * 조립체가 숨겨진 상태에서도 그릴 부품만 남긴다 (제품의 alwaysVisibleParts).
+ * 숨기지 않았으면 받은 목록 그대로다.
+ */
+export function visibleParts(product: ProductDef, parts: PartDef[], hidden: boolean): PartDef[] {
+  if (!hidden) return parts
+  const keep = new Set(product.alwaysVisibleParts ?? [])
+  return parts.filter((p) => keep.has(p.id))
+}
+
 /** 부품이 작업대 소속이고 아직 결합 전이면 작업대 오프셋, 아니면 0 */
 export function stationOffset(product: ProductDef, part: PartDef, mounted: Mounted): Vec3 {
   if (!part.station) return [0, 0, 0]

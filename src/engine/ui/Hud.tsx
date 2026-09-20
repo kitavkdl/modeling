@@ -96,7 +96,22 @@ export function Hud({ onBack }: { onBack: () => void }) {
       </div>
 
       {/* 라이선스 의무: 외부 에셋을 쓴 제품은 조립 이후 단계에서 출처를 계속 보여 준다 */}
-      {product.credits && phase !== 'assembly' ? <div className="hud hud-credits">{product.credits}</div> : null}
+      {product.credits?.length && phase !== 'assembly' ? (
+        <div className="hud hud-credits">
+          {product.credits.map((c, i) => (
+            <span key={i}>
+              {i > 0 ? ' / ' : ''}
+              {c.href ? (
+                <a href={c.href} target="_blank" rel="noopener noreferrer">
+                  {c.text}
+                </a>
+              ) : (
+                c.text
+              )}
+            </span>
+          ))}
+        </div>
+      ) : null}
 
       {product.hudExtra ? (
         <div className="hud hud-extra">

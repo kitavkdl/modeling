@@ -12,6 +12,7 @@ import {
   isStationSeated,
   stationOffset,
   validateProduct,
+  visibleParts,
   type AssemblyStore,
 } from './store'
 
@@ -387,5 +388,22 @@ describe('isAssemblyHidden', () => {
     expect(isAssemblyHidden(hidden, store.getState())).toBe(true)
     expect(seen[seen.length - 1].mounted['c']).toBeDefined()
     expect(seen.map((s) => s.phase)).toContain('assembly')
+  })
+})
+
+describe('visibleParts', () => {
+  const parts = product.parts.slice(0, 3)
+
+  it('숨기지 않으면 받은 목록 그대로', () => {
+    expect(visibleParts(product, parts, false)).toEqual(parts)
+  })
+
+  it('숨기면 alwaysVisibleParts에 든 것만 남는다', () => {
+    const withAlways: ProductDef = { ...product, alwaysVisibleParts: [parts[1].id] }
+    expect(visibleParts(withAlways, parts, true).map((p) => p.id)).toEqual([parts[1].id])
+  })
+
+  it('alwaysVisibleParts가 없으면 숨길 때 아무것도 안 남는다', () => {
+    expect(visibleParts(product, parts, true)).toEqual([])
   })
 })
