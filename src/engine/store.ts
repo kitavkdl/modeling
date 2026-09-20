@@ -25,6 +25,8 @@ export interface AssemblyState {
   /** complete → phasesAfterComplete[0] → ... 마지막에서 멈춘다 */
   advancePhase: () => void
   reset: () => void
+  /** 스토어를 버릴 때 호출한다. 돌고 있는 시퀀스 타이머를 끊어 죽은 스토어에 계속 쏘지 않게 한다. */
+  dispose: () => void
 }
 
 export type AssemblyStore = StoreApi<AssemblyState>
@@ -266,6 +268,13 @@ export function createAssemblyStore(product: ProductDef): AssemblyStore {
         dragTarget: null,
         sequencing: false,
       })
+    },
+
+    // ProductApp이 언마운트되면 이 스토어는 버려지는데, mountAll/skipCurrent의 setTimeout은
+    // 클로저가 살아 있어 계속 돈다. 구독자가 없어 화면에는 안 보이지만 타이머는 끝까지 돈다.
+    dispose: () => {
+      clearSequence()
+      set({ sequencing: false })
     },
   }))
 }

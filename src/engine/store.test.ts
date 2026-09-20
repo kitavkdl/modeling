@@ -204,8 +204,8 @@ describe('assembly store', () => {
   })
 })
 
-function tinyProduct(withPhaseOnMount = false, withStation = false): ProductDef {
-  // 부품 3개: a(preplaced) → b(count 2) → c(마지막, phaseOnMount)
+function tinyProduct(withPhaseOnMount = false, withStation = false, bCount = 2): ProductDef {
+  // 부품 3개: a(preplaced) → b(count bCount) → c(마지막, phaseOnMount)
   const mk = (id: string, count: number, requires: string[], extra: Partial<PartDef> = {}): PartDef => ({
     id,
     nameKo: id,
@@ -236,7 +236,7 @@ function tinyProduct(withPhaseOnMount = false, withStation = false): ProductDef 
       mk('a', 1, [], { preplaced: true }),
       // withStation이면 b는 키보드 제품의 'sandwich' 작업대(offset [0, 45, 0]) 소속이고 c가 그것을 결합한다.
       // 결합 전이라 b의 대기 위치(월드)에서 작업대 오프셋을 빼야 작업대 로컬 출발점이 된다.
-      mk('b', 2, ['a'], withStation ? { station: 'sandwich', restPosition: [0, 500, 500] } : {}),
+      mk('b', bCount, ['a'], withStation ? { station: 'sandwich', restPosition: [0, 500, 500] } : {}),
       mk('c', 1, ['b'], {
         ...(withPhaseOnMount ? { phaseOnMount: 'keyed' as const } : {}),
         ...(withStation ? { marries: 'sandwich' } : {}),
@@ -274,6 +274,24 @@ describe('skipCurrent / phaseOnMount', () => {
     // 대기 위치 [0, 500, 500] − 작업대 오프셋 [0, 45, 0]
     expect(store.getState().mounted['b:0'].from).toEqual([0, 455, 500])
     expect(store.getState().mounted['b:1'].from).toEqual([0, 455, 500])
+  })
+
+  it('dispose가 돌고 있는 시퀀스를 끊는다', () => {
+    vi.useFakeTimers()
+    const store = createAssemblyStore(tinyProduct(false, false, 3))
+    store.getState().skipCurrent()
+    // mountAll의 첫 걸음은 동기라 b:0은 이미 박혀 있고, 나머지는 타이머 위에 있다
+    expect(store.getState().mounted['b:0']).toBeDefined()
+    expect(store.getState().sequencing).toBe(true)
+
+    store.getState().dispose()
+    expect(store.getState().sequencing).toBe(false)
+
+    vi.runAllTimers()
+    expect(store.getState().mounted['b:0']).toBeDefined()
+    expect(store.getState().mounted['b:1']).toBeUndefined()
+    expect(store.getState().mounted['b:2']).toBeUndefined()
+    expect(store.getState().sequencing).toBe(false)
   })
 
   it('canUndo는 phaseOnMount 단계에서는 참, 그 뒤 단계에서는 거짓', () => {

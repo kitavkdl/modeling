@@ -2,7 +2,7 @@
 // 좌표계: x 앞뒤(+x 앞), y 상하(+y 위), z 좌우(+z 오른쪽). 지면이 y=0.
 // 부품을 추가할 때는 아래 구분 주석 자리에 add({...})를 순서대로 끼워 넣는다.
 
-import type { CameraView, Geometry, PartDef, PartInstance, ProductDef, StationDef, Vec3 } from '../../engine/types'
+import type { CameraView, CompositeChild, Geometry, PartDef, PartInstance, ProductDef, StationDef, Vec3 } from '../../engine/types'
 import {
   EXHAUST_COLLECTOR_PATH,
   brakeDisc,
@@ -205,11 +205,17 @@ add({
 const E = 'engine'
 const cx = CRANK[0], cy = CRANK[1]
 add({ id: 'crankcase_lower', ko: '크랭크케이스 하부', en: 'Lower Crankcase', geometry: crankcaseGeometry('lower'), mount: [cx, cy - 150, 0], material: 'cast_alu', station: E, requires: ['subframe'] })
+// 크랭크 웹은 커넥팅로드(|z| 35..49, 폭 14)를 양옆에서 감싼다. 예전에는 로드와 같은 z=±42에
+// 두께 34짜리 웹 하나씩만 있어 |z| 25..59를 차지했고 로드를 그대로 관통했다. 이제 실린더마다
+// 두 장씩, 로드 옆면에서 4mm 띄운 자리(중심 |z| 22와 62)에 세운다. 주 저널은 바깥 웹을
+// 통째로 삼키지 않도록 ±60에서 ±88로 물러났다.
+const CRANK_WEB = crankWebGeometry()
 add({ id: 'crankshaft', ko: '크랭크축', en: 'Crankshaft', geometry: { type: 'composite', children: [
-  { geometry: cylZ(22, 360) }, { geometry: cylZ(60, 40), position: [0, 0, -60] }, { geometry: cylZ(60, 40), position: [0, 0, 60] },
-  // 180도 위상 트윈 — 좌우 웹의 크랭크핀이 반대쪽을 본다
-  { geometry: crankWebGeometry(), position: [0, 0, -42], rotation: [0, 0, Math.PI / 2] },
-  { geometry: crankWebGeometry(), position: [0, 0, 42], rotation: [0, 0, -Math.PI / 2] } ] },
+  { geometry: cylZ(22, 360) }, { geometry: cylZ(60, 40), position: [0, 0, -88] }, { geometry: cylZ(60, 40), position: [0, 0, 88] },
+  // 180도 위상 트윈 — 좌우 실린더의 크랭크핀이 반대쪽을 본다
+  ...([-1, 1] as const).flatMap((s) =>
+    [22, 62].map((z): CompositeChild => ({ geometry: CRANK_WEB, position: [0, 0, z * s], rotation: [0, 0, (-s * Math.PI) / 2] })),
+  ) ] },
   mount: [cx, cy, 0], material: 'steel', station: E, small: true })
 add({ id: 'balancer', ko: '밸런서 샤프트', en: 'Balancer Shaft', geometry: cylZ(16, 340), mount: [cx + 110, cy + 20, 0], material: 'steel', station: E, small: true })
 add({ id: 'input_shaft', ko: '변속기 입력축', en: 'Transmission Input Shaft', geometry: { type: 'composite', children: [{ geometry: cylZ(14, 330) }, { geometry: cylZ(34, 24), position: [0, 0, -100] }, { geometry: cylZ(40, 24), position: [0, 0, -40] }, { geometry: cylZ(30, 24), position: [0, 0, 30] }, { geometry: cylZ(36, 24), position: [0, 0, 100] }] }, mount: [cx - 120, cy - 10, 0], material: 'steel', station: E, small: true })
@@ -435,8 +441,16 @@ function build(): PartDef[] {
 export const PARTS: PartDef[] = build()
 export const PART_BY_ID: Record<string, PartDef> = Object.fromEntries(PARTS.map((p) => [p.id, p]))
 
-/** 도색 순서: paintable 인스턴스를 x 내림차순(앞→뒤)으로. 0부터 */
+/** 도색 순서표: paintable 인스턴스를 x 내림차순(앞→뒤)으로. 모듈을 읽을 때 한 번만 만든다. */
+const PAINT_RANK: ReadonlyMap<string, number> = new Map(
+  PARTS.filter((p) => p.paintable)
+    .flatMap((p) => p.instances)
+    .sort((a, b) => b.mountPosition[0] - a.mountPosition[0])
+    .map((inst, i): [string, number] => [inst.id, i]),
+)
+
+/** 도색 순서. 0부터, 앞쪽 부품이 먼저다. 도색 대상이 아니면 0.
+ *  Paintable이 인스턴스마다 매 프레임 부르는 자리라 표를 미리 만들어 두고 찾기만 한다. */
 export function paintRank(instanceId: string): number {
-  const list = PARTS.filter((p) => p.paintable).flatMap((p) => p.instances).sort((a, b) => b.mountPosition[0] - a.mountPosition[0])
-  return Math.max(0, list.findIndex((i) => i.id === instanceId))
+  return PAINT_RANK.get(instanceId) ?? 0
 }

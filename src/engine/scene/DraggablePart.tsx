@@ -33,10 +33,12 @@ interface ReturnState {
   start: number
 }
 
-/** 월드 좌표를 캔버스 좌상단 기준 픽셀로 옮긴다 */
-function projectPx(v: THREE.Vector3, camera: THREE.Camera, rect: DOMRect, out: THREE.Vector3): ScreenPt {
-  out.copy(v).project(camera)
-  return { x: ((out.x + 1) / 2) * rect.width, y: ((1 - out.y) / 2) * rect.height }
+/** 월드 좌표를 캔버스 좌상단 기준 픽셀로 옮겨 out에 덮어쓴다. pointermove마다 도는 자리라 새 객체를 만들지 않는다. */
+function projectPx(v: THREE.Vector3, camera: THREE.Camera, rect: DOMRect, ndc: THREE.Vector3, out: ScreenPt): ScreenPt {
+  ndc.copy(v).project(camera)
+  out.x = ((ndc.x + 1) / 2) * rect.width
+  out.y = ((1 - ndc.y) / 2) * rect.height
+  return out
 }
 
 export function DraggablePart() {
@@ -56,8 +58,12 @@ function Draggable({ part }: { part: PartDef }) {
   const grabMesh = useRef<THREE.Mesh>(null)
   const drag = useRef<DragState | null>(null)
   const returning = useRef<ReturnState | null>(null)
-  /** 직전 pointermove에서의 부품 화면 좌표. 그 사이 구간을 잘라 밟으며 페인팅한다 */
-  const prevPx = useRef<ScreenPt | null>(null)
+  /** 직전 pointermove에서의 부품 화면 좌표. 그 사이 구간을 잘라 밟으며 페인팅한다.
+   *  값을 덮어쓰는 고정 객체라 "직전 값이 있는가"는 hasPrev로 따로 든다. */
+  const prevPx = useRef<ScreenPt>({ x: 0, y: 0 }).current
+  const hasPrev = useRef(false)
+  /** 이번 pointermove의 부품 화면 좌표 */
+  const partPx = useRef<ScreenPt>({ x: 0, y: 0 }).current
   const { camera, gl } = useThree()
   const raycaster = useRef(new THREE.Raycaster()).current
   const ndc = useRef(new THREE.Vector2()).current
@@ -69,6 +75,15 @@ function Draggable({ part }: { part: PartDef }) {
   const materials = useMaterials()
   const store = useAssemblyStore()
   const cfg = product.drag
+
+  // 고스트 목록을 pointermove마다 새로 쌓으면 인스턴스 수만큼 객체가 쏟아진다(키캡 83개 × 2).
+  // 부품이 바뀔 때 한 번만 인스턴스당 하나씩 만들어 두고, 매 move에서는 좌표만 덮어쓴다.
+  const ghostPool = useMemo<GhostPx[]>(
+    () => part.instances.map((inst) => ({ id: inst.id, px: { x: 0, y: 0 }, radiusPx: 0 })),
+    [part],
+  )
+  /** 이번 move에서 아직 장착되지 않은 고스트만 담는 재사용 배열 */
+  const ghostList = useRef<GhostPx[]>([]).current
 
   // mounted 객체 전체를 구독하면 페인팅으로 하나 박힐 때마다 이 컴포넌트가 다시 렌더되고,
   // position으로 넘긴 rest가 새 객체면 R3F가 매번 group.position을 되돌려 잡고 있던 부품이
@@ -100,7 +115,7 @@ function Draggable({ part }: { part: PartDef }) {
       }
     }
     drag.current = null
-    prevPx.current = null
+    hasPrev.current = false
     s.setDragTarget(null)
     s.setDragging(false)
     setControlsEnabled(true)
@@ -121,8 +136,10 @@ function Draggable({ part }: { part: PartDef }) {
       const fov = (camera as THREE.PerspectiveCamera).fov ?? 40
       const radiusMm = part.count === 1 ? cfg.snapMm : cfg.paintMm
       const mounted = store.getState().mounted
-      const ghosts: GhostPx[] = []
-      for (const inst of part.instances) {
+      const ghosts = ghostList
+      ghosts.length = 0
+      for (let i = 0; i < part.instances.length; i++) {
+        const inst = part.instances[i]
         if (mounted[inst.id]) continue
         anchor.set(
           (inst.mountPosition[0] + ox) * MM,
@@ -130,27 +147,30 @@ function Draggable({ part }: { part: PartDef }) {
           (inst.mountPosition[2] + oz) * MM,
         )
         const dist = camera.position.distanceTo(anchor)
-        ghosts.push({
-          id: inst.id,
-          px: projectPx(anchor, camera, rect, proj),
-          radiusPx: thresholdPx(radiusMm, dist, rect.height, fov),
-        })
+        const g = ghostPool[i]
+        projectPx(anchor, camera, rect, proj, g.px)
+        g.radiusPx = thresholdPx(radiusMm, dist, rect.height, fov)
+        ghosts.push(g)
       }
-      const partPx = projectPx(d.target, camera, rect, proj)
+      projectPx(d.target, camera, rect, proj, partPx)
       const s = store.getState()
       if (part.count === 1) {
         s.setDragTarget(resolveDragTargets(part, partPx, ghosts, mounted).snap)
-        prevPx.current = partPx
+        prevPx.x = partPx.x
+        prevPx.y = partPx.y
+        hasPrev.current = true
         return
       }
       // 포인터가 한 번에 판정 반경의 2배 넘게 뛰면 사이의 슬롯이 빠진다.
       // 직전 위치에서 지금 위치까지를 가장 작은 반경의 절반 간격으로 밟으며 지나간 자리를 전부 박는다.
-      const from = prevPx.current ?? partPx
+      const from = hasPrev.current ? prevPx : partPx
       const stepPx = ghosts.reduce((m, g) => Math.min(m, g.radiusPx), Infinity) / 2
       // 출발점은 잡고 있는 실물 위치. 들고 있는 부품에서 튀어나와 박히는 것처럼 보인다.
       const dropAt: Vec3 = [d.target.x / MM - ox, d.target.y / MM - oy, d.target.z / MM - oz]
       for (const id of resolveAlongSegment(part, from, partPx, ghosts, mounted, stepPx)) s.mount(id, dropAt)
-      prevPx.current = partPx
+      prevPx.x = partPx.x
+      prevPx.y = partPx.y
+      hasPrev.current = true
     }
     const upHandler = () => {
       if (drag.current) endDrag()
@@ -165,7 +185,7 @@ function Draggable({ part }: { part: PartDef }) {
       // 부품이 바뀌어 언마운트되면 드래그도 끝난다
       if (drag.current) {
         drag.current = null
-        prevPx.current = null
+        hasPrev.current = false
         const s = store.getState()
         s.setDragTarget(null)
         s.setDragging(false)
@@ -173,7 +193,7 @@ function Draggable({ part }: { part: PartDef }) {
         document.body.style.cursor = ''
       }
     }
-  }, [camera, gl, endDrag, ndc, raycaster, tmp, anchor, proj, part, store, cfg, ox, oy, oz])
+  }, [camera, gl, endDrag, ndc, raycaster, tmp, anchor, proj, part, store, cfg, ox, oy, oz, ghostPool, ghostList, partPx, prevPx])
 
   const onPointerDown = useCallback(
     (e: ThreeEvent<PointerEvent>) => {
@@ -190,7 +210,7 @@ function Draggable({ part }: { part: PartDef }) {
       const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, e.point)
       const offset = g.position.clone().sub(e.point)
       drag.current = { plane, offset, target: g.position.clone() }
-      prevPx.current = null
+      hasPrev.current = false
       store.getState().setDragging(true)
       document.body.style.cursor = 'grabbing'
     },

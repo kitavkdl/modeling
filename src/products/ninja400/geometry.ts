@@ -60,6 +60,17 @@ export function cylZ(r: number, len: number, segments = 32): Geometry {
 
 const sub = (base: Vec3) => (p: Vec3): Vec3 => [p[0] - base[0], p[1] - base[1], p[2] - base[2]]
 
+/** 메인 스파 관 반지름 */
+export const MAIN_SPAR_RADIUS = 16
+
+/**
+ * 메인 스파 중심선(차체 절대 좌표). 헤드 → 탱크 옆 → 엔진 위 → 스윙암 피벗.
+ * 탱크 폭이 이 선에 걸리므로 탱크 여유 테스트가 형상과 같은 값을 보도록 따로 빼 뒀다.
+ */
+export function mainSparPath(s: 1 | -1): Vec3[] {
+  return [[395, 925, 0], [330, 855, 120 * s], [120, 780, 175 * s], [-150, 705, 168 * s], [-390, 585, 122 * s], [-420, 400, 100 * s]]
+}
+
 /**
  * 트렐리스 메인 프레임. 헤드튜브(lathe) + 좌우 메인 스파 + 다운튜브 + 대각 브레이스 +
  * 중앙 백본 + 가로대. 스파는 엔진 위로, 다운튜브는 엔진 앞으로 지나 크랭크케이스를 비껴간다.
@@ -73,7 +84,7 @@ export function frameTrellis(base: Vec3 = [0, 0, 0]): Geometry {
   const [hx, hy] = forkPoint(760)
   const side = (s: 1 | -1): CompositeChild[] => [
     // 메인 스파: 헤드 → 탱크 아래 → 엔진 위 → 스윙암 피벗
-    tube(16, [[395, 925, 0], [330, 855, 120 * s], [120, 780, 175 * s], [-150, 705, 168 * s], [-390, 585, 122 * s], [-420, 400, 100 * s]], 12),
+    tube(MAIN_SPAR_RADIUS, mainSparPath(s), 12),
     // 다운튜브: 헤드 → 라디에이터 옆 → 엔진 앞 하단 마운트(지그가 받치는 y=300)
     tube(16, [[452, 800, 0], [390, 670, 95 * s], [330, 500, 128 * s], [275, 355, 138 * s], [200, 300, 138 * s]], 12),
     // 대각 브레이스 — 트렐리스의 삼각형
@@ -111,9 +122,11 @@ export function subframeRails(base: Vec3 = [0, 0, 0]): Geometry {
   const tube = (radius: number, pts: Vec3[], radial = 10): CompositeChild => ({
     geometry: { type: 'tube', radius, radial, segments: Math.max(12, pts.length * 10), path: path(pts) },
   })
+  // 레일 뒤끝은 테일 카울 안으로 모은다. 예전에는 x=-900에서 |z| 86 + r12 = 98이라
+  // 그 자리 카울 반폭(78)보다 20mm 밖으로 삐져나와 옆구리에 관 끝이 드러났다.
   const side = (s: 1 | -1): CompositeChild[] => [
     // 시트 레일 — 메인 스파 뒤끝(-360, 540)에서 테일까지
-    tube(12, [[-390, 588, 122 * s], [-560, 655, 116 * s], [-750, 705, 104 * s], [-900, 738, 86 * s]]),
+    tube(12, [[-390, 588, 122 * s], [-560, 655, 112 * s], [-750, 705, 96 * s], [-900, 738, 60 * s]]),
     // 받침 스테이 — 스윙암 피벗에서 레일 중간으로
     tube(11, [[-420, 400, 100 * s], [-520, 540, 106 * s], [-620, 671, 112 * s]]),
   ]
@@ -122,8 +135,8 @@ export function subframeRails(base: Vec3 = [0, 0, 0]): Geometry {
     children: [
       ...side(1),
       ...side(-1),
-      tube(10, [[-750, 705, 104], [-750, 705, 0], [-750, 705, -104]]),
-      tube(10, [[-900, 738, 86], [-900, 738, 0], [-900, 738, -86]]),
+      tube(10, [[-750, 705, 96], [-750, 705, 0], [-750, 705, -96]]),
+      tube(10, [[-900, 738, 60], [-900, 738, 0], [-900, 738, -60]]),
     ],
   }
 }
@@ -488,13 +501,16 @@ export function pistonGeometry(r = BORE / 2, h = 62): Geometry {
   }
 }
 
+/** 크랭크 웹 두께. extrude는 z를 ±depth/2로 잡으므로 웹은 자기 position을 중심으로 선다. */
+export const CRANK_WEB_DEPTH = 18
+
 /** 크랭크 웹(카운터웨이트). 눈물방울 윤곽을 z로 밀어낸다 — 좁은 쪽(+x)이 크랭크핀이다. */
-export function crankWebGeometry(r = 60, pinR = 26): Geometry {
+export function crankWebGeometry(r = 60, pinR = 26, depth = CRANK_WEB_DEPTH): Geometry {
   const shape = ccw([
     [pinR + 16, 20], [26, 40], [-6, r * 0.86], [-34, r],
     [-r, 26], [-r, -26], [-34, -r], [-6, -r * 0.86], [26, -40], [pinR + 16, -20],
   ])
-  return { type: 'extrude', shape, depth: 34, bevel: 3 }
+  return { type: 'extrude', shape, depth, bevel: 3 }
 }
 
 // --- 배기 --------------------------------------------------------------------
@@ -659,18 +675,61 @@ export function mirrorZ(sections: Vec3[][]): Vec3[][] {
 
 const rebase = (sections: Vec3[][], base: Vec3): Vec3[][] => sections.map((s) => s.map(sub(base)))
 
+/** loft 껍데기의 x 스테이션 하나 — 반폭과 위·아래 y. 테스트가 형상과 같은 표를 본다. */
+export interface LoftStation {
+  x: number
+  /** 그 x에서의 최대 반폭 (|z|) */
+  half: number
+  bottom: number
+  top: number
+}
+
+const stations = (xs: readonly number[], half: readonly number[], bottom: readonly number[], top: readonly number[]): LoftStation[] =>
+  xs.map((x, i) => ({ x, half: half[i], bottom: bottom[i], top: top[i] }))
+
+/**
+ * x에서의 단면을 스테이션 사이 선형 보간으로 구한다. loft는 단면을 직선으로 잇고 각 단면의
+ * x가 일정하므로 이 보간이 실제 메시와 정확히 같다. 표 범위 밖이면 null.
+ * 표는 x 내림차순으로 적혀 있다.
+ */
+export function sectionAt(table: readonly LoftStation[], x: number): LoftStation | null {
+  const first = table[0]
+  const last = table[table.length - 1]
+  if (x > first.x || x < last.x) return null
+  for (let i = 0; i < table.length - 1; i++) {
+    const a = table[i]
+    const b = table[i + 1]
+    if (x <= a.x && x >= b.x) {
+      const t = a.x === b.x ? 0 : (a.x - x) / (a.x - b.x)
+      const mix = (p: number, q: number) => p + (q - p) * t
+      return { x, half: mix(a.half, b.half), bottom: mix(a.bottom, b.bottom), top: mix(a.top, b.top) }
+    }
+  }
+  return null
+}
+
 // 연료탱크 --------------------------------------------------------------------
 // 앞이 높고 뒤로 가며 좁아진다. 밑면 y=760은 프레임 메인 스파(|z| >= 152) 안쪽이라
 // 스파는 탱크 옆을 비껴가고, 백본(z=0)만 껍데기 안을 지난다.
 //
 // 옆구리는 캠 커버(|z| <= 104, y <= 838)를 덮어야 한다. 그래서 (a) 링 밑변을 0.7배에서
-// 0.94배로 키워 밑단이 거의 수직으로 떨어지고, (b) 무릎 자리(x -60..120)를 반폭 114~120으로
-// 넓히고, (c) 뒤쪽 밑면을 760에서 808까지 들어 올려 엔진 윗면 뒤끝과 아예 겹치지 않게 했다.
-// 반폭 상한은 120 — 메인 스파 샘플의 최소 여유가 124.3이라 그보다 넓히면 스파를 먹는다.
+// 0.94배로 키워 밑단이 거의 수직으로 떨어지고, (b) 뒤쪽 밑면을 760에서 808까지 들어 올려
+// 엔진 윗면 뒤끝과 아예 겹치지 않게 했다.
+//
+// 반폭 상한은 x마다 다르다. 메인 스파는 앞에서 뒤로 가며 벌어지므로(x=300에서 |z|≈137,
+// x=120에서 175) 앞은 좁고 무릎 자리는 넓을 수 있다. 예전에는 탱크의 전역 최대 반폭 하나만
+// 스파와 비교해서 제일 좁은 앞쪽 여유(124)가 탱크 전체를 120으로 묶어 버렸다. 이제
+// TANK_SECTIONS를 x별로 비교하므로 무릎을 실물다운 반폭 152~158까지 벌렸다.
 const TANK_X = [300, 240, 180, 120, 60, 0, -60, -120]
-const TANK_HALF = [62, 98, 114, 120, 120, 114, 96, 62]
+const TANK_HALF = [62, 100, 130, 152, 158, 148, 112, 62]
 const TANK_TOP = [860, 900, 940, 960, 950, 920, 890, 862]
 const TANK_BOTTOM = [760, 760, 760, 760, 760, 762, 784, 808]
+
+/** 탱크 껍데기의 x별 단면표 */
+export const TANK_SECTIONS: readonly LoftStation[] = stations(TANK_X, TANK_HALF, TANK_BOTTOM, TANK_TOP)
+
+/** x에서의 탱크 반폭(mm). 탱크 앞뒤 범위 밖이면 0 */
+export const tankHalfWidthAt = (x: number): number => sectionAt(TANK_SECTIONS, x)?.half ?? 0
 
 /** 탱크 링 단면 — RING10보다 밑변이 넓다(0.94배). 무릎 아래가 수직으로 떨어진다. */
 const TANK_RING: Profile = [
@@ -765,11 +824,18 @@ export function lowerCowl(side: 1 | -1, base: Vec3 = LOWER_COWL_BASE(side)): Geo
 // 뒤로 가며 좁아지면서 치켜 올라간다. 뒷면은 축소 단면으로 막고 그 위에 후미등이 앉는다.
 // 윗마루는 동승자 시트 윗면보다 15mm쯤 낮게 따라가(시트 패드가 그만큼만 도드라진다),
 // 밑단은 서브프레임 시트 레일(x -596에서 y 664, x -900에서 y 738, 튜브 r12) 아래로
-// 내려 레일 뒤끝을 덮는다. 레일이 |z| 86~122라 옆구리에서는 아래쪽 끝이 조금 비어져 나온다.
+// 내려 레일 뒤끝을 덮는다. 뒤 두 단면은 레일 끝(|z| 60 + r12 = 72)을 옆구리로도 감싸도록
+// 95→98, 78→84로 조금 넓혔다.
 const TAIL_X = [-520, -596, -672, -748, -824, -900]
-const TAIL_HALF = [130, 127, 120, 110, 95, 78]
+const TAIL_HALF = [130, 127, 120, 110, 98, 84]
 const TAIL_TOP = [806, 818, 830, 842, 856, 868]
 const TAIL_BOT = [664, 674, 686, 698, 710, 722]
+
+/** 테일 카울 껍데기의 x별 단면표 */
+export const TAIL_SECTIONS: readonly LoftStation[] = stations(TAIL_X, TAIL_HALF, TAIL_BOT, TAIL_TOP)
+
+/** x에서의 테일 카울 반폭(mm). 카울 앞뒤 범위 밖이면 0 */
+export const tailHalfWidthAt = (x: number): number => sectionAt(TAIL_SECTIONS, x)?.half ?? 0
 
 export const TAIL_COWL_BASE: Vec3 = [-710, 800, 0]
 

@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { CompositeChild, Vec3 } from '../../engine/types'
 import { validateGeometry } from '../../engine/types'
 import { PARTS, PART_BY_ID, PROPS, STATIONS } from './parts'
+import { MAIN_SPAR_RADIUS, TANK_SECTIONS, mainSparPath, sectionAt, tailHalfWidthAt } from './geometry'
 import { NINJA_MATERIALS } from './materials'
 import { assemblyBounds, instanceBounds, partTubeSamples, tubeSamples } from './test-utils'
 
@@ -329,13 +330,29 @@ describe('ninja400 parts', () => {
     // 탱크는 프레임 상부 튜브대(메인 스파 y 780~925, 백본 y 805~908) 위에 얹힌다
     expect(tank.min[1]).toBeGreaterThanOrEqual(740)
     expect(tank.max[1]).toBeLessThanOrEqual(1000)
-    // 메인 스파(|z| >= 140)는 탱크 옆구리 바깥을 지난다. 중앙 백본과 그 브레이스(|z| < 140)는
-    // 실물처럼 탱크 껍데기 안을 지나므로 뺀다.
-    for (const { point: [x, y, z], radius } of frameSamples()) {
-      if (Math.abs(z) < 140) continue
-      if (x < tank.min[0] || x > tank.max[0] || y < tank.min[1] || y > tank.max[1]) continue
-      expect(Math.abs(z) - radius, `spar (${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)})`).toBeGreaterThan(tank.max[2])
+    // 메인 스파는 탱크 옆구리 바깥을 지난다. 스파는 앞에서 뒤로 가며 벌어지므로 전역 최대
+    // 반폭 하나로 재면 제일 좁은 앞쪽 여유가 탱크 전체를 묶어 버린다 — x마다 그 자리의
+    // 반폭(TANK_SECTIONS 보간)과 비교한다. 샘플의 y가 그 x의 탱크 높이 범위 밖이면 스파가
+    // 탱크 아래나 위로 지나는 것이라 폭 제약이 아니다.
+    // 중앙 백본과 그 브레이스는 실물처럼 탱크 껍데기 안을 지나므로 애초에 스파만 본다.
+    let sampled = 0
+    for (const s of [1, -1] as const) {
+      const curve = new THREE.CatmullRomCurve3(mainSparPath(s).map((p) => vec(p)), false, 'centripetal')
+      for (const p of curve.getPoints(400)) {
+        const sec = sectionAt(TANK_SECTIONS, p.x)
+        if (!sec || p.y < sec.bottom || p.y > sec.top) continue
+        sampled++
+        expect(
+          Math.abs(p.z) - MAIN_SPAR_RADIUS,
+          `spar (${p.x.toFixed(0)}, ${p.y.toFixed(0)}, ${p.z.toFixed(0)}) vs 반폭 ${sec.half.toFixed(1)}`,
+        ).toBeGreaterThan(sec.half)
+      }
     }
+    // 탱크 옆을 실제로 지나는 표본이 있어야 검사가 의미 있다
+    expect(sampled).toBeGreaterThan(50)
+    // 무릎 자리가 실물다운 폭이다 (반폭 150~165)
+    expect(tank.max[2]).toBeGreaterThanOrEqual(150)
+    expect(tank.max[2]).toBeLessThanOrEqual(165)
     // 탱크 → 라이더 시트 → 동승자 시트가 앞뒤로 겹치지 않는다
     expect(tank.min[0]).toBeGreaterThanOrEqual(rider.max[0])
     expect(rider.min[0]).toBeGreaterThanOrEqual(pillion.max[0])
@@ -349,6 +366,50 @@ describe('ninja400 parts', () => {
         expect(inside, `rail (${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)})`).toBe(false)
       }
     }
+  })
+  it('서브프레임 레일 뒤끝이 테일 카울 옆구리 안으로 들어간다', () => {
+    // 예전에는 레일 끝이 x=-900에서 |z| 86 + r12 = 98인데 그 자리 카울 반폭은 78이라
+    // 관 끝이 옆구리 밖으로 20mm 삐져나왔다. 카울은 x마다 반폭이 다르므로 전역 bbox가
+    // 아니라 그 x의 단면과 비교한다.
+    const rear = tubeSamples(PART_BY_ID.subframe.instances[0], 600).filter((t) => t.point[0] < -850)
+    expect(rear.length).toBeGreaterThan(20)
+    for (const { point: [x, y, z], radius } of rear) {
+      const half = tailHalfWidthAt(x)
+      expect(half, `x=${x.toFixed(0)}에 테일 카울 단면이 없다`).toBeGreaterThan(0)
+      expect(Math.abs(z) + radius, `rail (${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)})`).toBeLessThanOrEqual(half)
+    }
+    // 카울 자체의 z 범위 안이기도 하고, 카울보다 뒤로 나가지도 않는다
+    const cowl = instanceBounds(PART_BY_ID.tail_cowl.instances[0])
+    const cowlHalf = Math.max(-cowl.min[2], cowl.max[2])
+    for (const { point: [x, , z], radius } of rear) {
+      expect(Math.abs(z) + radius).toBeLessThanOrEqual(cowlHalf)
+      expect(x).toBeGreaterThanOrEqual(cowl.min[0])
+    }
+  })
+  it('크랭크 웹이 커넥팅로드를 파고들지 않고 크랭크축이 크랭크케이스 안에 든다', () => {
+    const crank = PART_BY_ID.crankshaft.instances[0]
+    const g = crank.geometry
+    if (g.type !== 'composite') throw new Error('crankshaft geometry must be composite')
+    // 실린더마다 웹 두 장이 로드를 양옆에서 감싼다
+    const webs = g.children.filter((c) => c.geometry.type === 'extrude')
+    expect(webs).toHaveLength(4)
+    const rods = PART_BY_ID.conrod.instances.map((i) => ({ id: i.id, b: instanceBounds(i) }))
+    expect(rods).toHaveLength(2)
+    webs.forEach((web, k) => {
+      // 웹 하나만 든 합성 인스턴스로 월드 bbox를 잰다
+      const wb = instanceBounds({ ...crank, id: `crank_web_${k}`, geometry: { type: 'composite', children: [web] } })
+      for (const rod of rods) {
+        const overlaps = [0, 1, 2].every((i) => wb.min[i] < rod.b.max[i] && wb.max[i] > rod.b.min[i])
+        expect(overlaps, `web${k} ${JSON.stringify(wb)} vs ${rod.id} ${JSON.stringify(rod.b)}`).toBe(false)
+      }
+    })
+    // 크랭크축 전체가 크랭크케이스 봉투(x -330..90, y 280..550, |z| <= 190) 안이다
+    const cb = instanceBounds(crank)
+    expect(cb.min[0]).toBeGreaterThanOrEqual(-330)
+    expect(cb.max[0]).toBeLessThanOrEqual(90)
+    expect(cb.min[1]).toBeGreaterThanOrEqual(280)
+    expect(cb.max[1]).toBeLessThanOrEqual(550)
+    expect(Math.max(-cb.min[2], cb.max[2])).toBeLessThanOrEqual(190)
   })
   it('펜더가 타이어를 감싸고 카울이 라디에이터를 덮는다', async () => {
     const { FRONT_AXLE, FRONT_TIRE_R } = await import('./spec')

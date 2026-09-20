@@ -12,6 +12,8 @@ export function ProductApp({ product, onBack }: { product: ProductDef; onBack: (
     // 개발 중 콘솔에서 상태를 만지기 위한 훅. 프로덕션 번들에는 들어가지 않는다.
     if (import.meta.env.DEV) (window as unknown as { __assembly?: unknown }).__assembly = store
   }, [store])
+  // 시퀀스 도중에 제품을 벗어나면 setTimeout이 버려진 스토어를 향해 계속 돈다 — 여기서 끊는다
+  useEffect(() => () => store.getState().dispose(), [store])
   useEffect(() => {
     document.title = `${product.nameEn} · Assembly`
     return () => {
