@@ -90,7 +90,6 @@ function RideScene({ visible }: { visible: boolean }) {
   const { scene } = useGLTF(URL)
   const start = useRef(0)
   const fading = useRef(true)
-  const root = useRef<THREE.Group>(null)
 
   // 재질은 원본 하나당 한 번만 clone해서 그 재질을 쓰는 메시 전부에 물린다 — useGLTF 캐시가 준
   // 원본을 직접 건드리면 다음 로드가 반투명해지고, 메시마다 clone하면 같은 재질이 수십 개로 불어난다.
@@ -181,11 +180,9 @@ function RideScene({ visible }: { visible: boolean }) {
       }
     }
 
-    // 기울기: 접지선을 축으로 굴린다. 모델 원점이 이미 지면(y = 0)이라 그룹을 그대로 x축으로 돌리면
-    // 회전축이 접지선을 지난다. 오른손 법칙으로 +x 둘레 양의 회전은 (0,1,0)을 (0,cosθ,sinθ)로 보내
-    // 차 위쪽을 +z(차 오른쪽)로 끌어간다 — 즉 오른쪽으로 눕는 것이 **양의** 회전이다.
-    // ride.lean도 + = 오른쪽이므로 부호를 그대로 쓴다.
-    if (root.current) root.current.rotation.x = ride.lean
+    // 기울기·피치는 여기서 걸지 않는다. 이 그룹만 돌리면 시동 스위치·스로틀 그립·꽂힌 키가
+    // 제자리에 남아 공중에 떠 보였다 — 차에 붙은 전부를 묶은 엔진의 리그 그룹
+    // (engine/scene/rigRef)에 finale/rideRig가 한 번에 건다.
 
     if (ride.speed === 0) return
     // +x가 앞, +z가 오른쪽이면 +z 둘레 양의 회전은 바퀴 위쪽을 뒤로 민다(오른손 법칙:
@@ -195,7 +192,7 @@ function RideScene({ visible }: { visible: boolean }) {
   })
 
   return (
-    <group ref={root} visible={visible}>
+    <group visible={visible}>
       <primitive object={scene} />
     </group>
   )

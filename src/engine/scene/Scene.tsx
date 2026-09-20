@@ -6,6 +6,7 @@ import { Assembly } from './Assembly'
 import { CameraRig, viewToPosition } from './CameraRig'
 import { DraggablePart } from './DraggablePart'
 import { Floor, Lights } from './Environment'
+import { setRig } from './rigRef'
 
 export function Scene() {
   const product = useProduct()
@@ -25,9 +26,13 @@ export function Scene() {
       <color attach="background" args={['#0A0A0B']} />
       <Lights />
       <Floor />
-      <Assembly />
-      <DraggablePart />
-      <Finale />
+      {/* 차체에 붙은 것은 전부 이 그룹 안이다 — 제품이 기울이면(rigRef) 조립체·드래그 부품·
+          제품 연출이 한 덩어리로 같이 눕는다. 바닥·조명·카메라는 밖에 남는다. */}
+      <group ref={setRig}>
+        <Assembly />
+        <DraggablePart />
+        <Finale />
+      </group>
       <CameraRig />
     </Canvas>
   )

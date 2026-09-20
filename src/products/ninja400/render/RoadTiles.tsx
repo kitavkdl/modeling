@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { useFrame, useThree } from '@react-three/fiber'
+import { createPortal, useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { useAssembly } from '../../../engine/context'
 import { MM } from '../../../engine/types'
@@ -70,6 +70,7 @@ export function RoadTiles() {
 
 function Tiles() {
   const gl = useThree((s) => s.gl)
+  const scene = useThree((s) => s.scene)
   const texture = useMemo(() => {
     const tex = new THREE.CanvasTexture(makeTileCanvas())
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping
@@ -110,13 +111,17 @@ function Tiles() {
     texture.offset.y = flow.current.v - Math.floor(flow.current.v)
   })
 
-  return (
+  // 장면 루트로 내보낸다. 제품 연출(Finale)은 차체 리그 그룹 안에 있어서 기울이면 같이 눕는데,
+  // 노면은 세상이다 — 여기 남겨 두면 차가 38° 눕는 순간 60 m짜리 바닥이 통째로 기울어
+  // 화면 전체가 돌아간다. 바닥·조명과 같은 층에 둔다.
+  return createPortal(
     // 그림자 카메라 범위(±2.4 m) 안쪽만 그림자 샘플링으로 살짝 어두워져 네모 판처럼 보였다 —
     // 접촉 그림자만으로 충분하다.
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, ROAD_Y, 0]} receiveShadow={false}>
       <planeGeometry args={[ROAD_U, ROAD_U]} />
       <meshStandardMaterial map={texture} roughness={0.95} metalness={0} />
-    </mesh>
+    </mesh>,
+    scene,
   )
 }
 

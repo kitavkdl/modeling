@@ -1,8 +1,10 @@
 import { useEffect } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { useAssembly } from '../../../engine/context'
+import { getRig, resetRig } from '../../../engine/scene/rigRef'
 import * as engineSound from '../audio/engineSound'
 import { rideLoad, shiftDown, shiftUp, stepRide } from './rideModel'
+import { applyRigPose } from './rideRig'
 import { clutchHeld, notifyRide, ride, rideInput } from './rideState'
 
 // 키보드 주행 조작. 그리는 것은 없고 window 이벤트와 매 프레임 계산만 맡는다.
@@ -11,6 +13,8 @@ import { clutchHeld, notifyRide, ride, rideInput } from './rideState'
 
 /** 변속 연출이 0으로 돌아오는 시간 (초) */
 const KICK_S = 0.15
+/** 클러치를 안 잡고 변속을 시도했을 때 "클러치" 경고등이 켜져 있는 시간 (초) */
+const CLUTCH_WARN_S = 0.8
 /** 탭이 멈췄다 돌아왔을 때 한 프레임에 몰아서 계산하지 않도록 */
 const MAX_DT = 0.1
 
@@ -24,6 +28,12 @@ function typing(target: EventTarget | null): boolean {
 
 export function RideControls() {
   const running = useAssembly((s) => s.phase === 'running')
+
+  // 주행을 벗어나면 리그를 제자리로 — 남겨 두면 조립 화면이 기울어진 채로 뜬다
+  useEffect(() => {
+    if (!running) return
+    return () => resetRig()
+  }, [running])
 
   useEffect(() => {
     if (!running) return
@@ -67,8 +77,9 @@ export function RideControls() {
           e.preventDefault()
           if (e.repeat) return
           if (!clutchHeld()) {
-            // 클러치를 안 잡았다 — 기어가 걸리는 시늉만
+            // 클러치를 안 잡았다 — 기어가 걸리는 시늉만 하고 계기에 왜인지를 띄운다
             ride.shiftKick = -1
+            ride.clutchWarn = CLUTCH_WARN_S
             return
           }
           // 시동이 꺼져 있어도 클러치만 잡았으면 단수는 바뀐다 — 실차도 그렇고,
@@ -130,10 +141,16 @@ export function RideControls() {
     ride.lowRpmFor = next.lowRpmFor
     ride.fuelCut = next.fuelCut
     ride.lean = next.lean
+    ride.lurch = next.lurch
+    ride.crankFor = next.crankFor
     if (ride.shiftKick !== 0) {
       const left = Math.abs(ride.shiftKick) - dt / KICK_S
       ride.shiftKick = left <= 0 ? 0 : Math.sign(ride.shiftKick) * left
     }
+    if (ride.clutchWarn > 0) ride.clutchWarn = Math.max(0, ride.clutchWarn - dt)
+    // 차체 자세는 실물 모델 그룹이 아니라 리그 전체에 건다 — 스위치·그립·꽂힌 키가 같이 눕는다.
+    // stepRide와 같은 프레임에서 걸어야 계기·노면과 한 박자로 움직인다.
+    applyRigPose(getRig(), ride.lean, ride.lurch)
     engineSound.setRpm(ride.stalled ? 0 : ride.rpm)
     engineSound.setThrottle(ride.stalled ? 0 : ride.throttle)
     engineSound.setLoad(ride.stalled ? 0 : rideLoad(ride))
