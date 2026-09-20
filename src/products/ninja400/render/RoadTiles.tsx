@@ -29,6 +29,39 @@ const FOG_DENSITY = 0.03 * M_PER_UNIT
 const FOG_COLOR = '#0A0A0B'
 /** 탭 전환 등으로 프레임이 밀렸을 때 무늬가 튀지 않게 (초) */
 const MAX_DT = 0.1
+/**
+ * 미끄러짐 각의 상한 (rad = 50°).
+ *
+ * 화면의 차는 요잉하지 않는다 — 원점에 선 채 기울기만 바뀐다. 그래서 heading은 "차가 어디를
+ * 보고 있는가"가 아니라 **바닥이 어느 쪽으로 미끄러져 흐르는가**의 시각 근사일 뿐이다.
+ * turnRate를 그냥 적분하면 D/F를 몇 초만 붙잡아도 90°를 넘고, 그 순간 cos(h)가 음수가 되어
+ * 바닥이 거꾸로(뒤에서 앞으로) 흐른다 — 차는 여전히 앞으로 달리는데 노면만 후진한다.
+ * 50°면 옆으로 흐르는 성분이 앞으로 흐르는 성분의 1.2배까지 자라서 선회감은 충분히 읽히고,
+ * 앞으로 흐르는 성분(cos 50° = 0.64)은 끝까지 양수로 남는다.
+ */
+export const HEADING_MAX = (50 * Math.PI) / 180
+/** 이 아래로 기울기가 돌아오면 미끄러짐 각을 0으로 풀어 준다 (rad = 2°) */
+const HEADING_IDLE_LEAN = (2 * Math.PI) / 180
+/** 풀리는 시정수 (초) */
+const HEADING_RELAX_TAU = 0.8
+/** 이 아래 차속에서는 선회가 없다 — 무조건 푼다 (m/s) */
+const HEADING_MIN_SPEED = 1
+
+/** ±HEADING_MAX로 물린다 */
+const clampHeading = (h: number): number => (h > HEADING_MAX ? HEADING_MAX : h < -HEADING_MAX ? -HEADING_MAX : h)
+
+/**
+ * 한 프레임의 미끄러짐 각 (rad). 기울이고 있으면 turnRate를 적분하고, 세우면(또는 서면)
+ * 0으로 지수 감쇠한다. 어느 쪽이든 ±HEADING_MAX를 넘지 않는다.
+ */
+export function advanceHeading(heading: number, lean: number, speed: number, dt: number): number {
+  if (!Number.isFinite(heading) || !Number.isFinite(dt) || dt <= 0) {
+    return Number.isFinite(heading) ? clampHeading(heading) : 0
+  }
+  const relaxing = !Number.isFinite(lean) || Math.abs(lean) < HEADING_IDLE_LEAN || !(speed >= HEADING_MIN_SPEED)
+  const next = relaxing ? heading * Math.exp(-dt / HEADING_RELAX_TAU) : heading + turnRate(lean, speed) * dt
+  return clampHeading(next)
+}
 
 export function RoadTiles() {
   const running = useAssembly((s) => s.phase === 'running')
@@ -61,9 +94,10 @@ function Tiles() {
     // 무늬는 그 축의 **음의 방향**으로 흐른다 (한 장 = TEX_M 미터).
     //
     // 차는 원점에 고정이고 무늬가 흐르므로, 무늬의 변위는 차 속도의 반대다.
-    // 기울기가 선회를 만들고(turnRate), 선회가 진행 방향(heading, 월드 +x 기준 rad)을 돌린다.
-    flow.current.heading += turnRate(ride.lean, speed) * dt
-    const h = flow.current.heading
+    // 기울기가 선회를 만들고(turnRate), 선회가 미끄러짐 각(heading, 월드 +x 기준 rad)을 돌린다.
+    // 적분은 advanceHeading이 ±50°로 물리고 세우면 0으로 풀어 준다 — 위 주석 참조.
+    const h = advanceHeading(flow.current.heading, ride.lean, speed, dt)
+    flow.current.heading = h
     const dx = speed * Math.cos(h) * dt // m, 월드 +x (차 앞쪽)
     const dz = speed * Math.sin(h) * dt // m, 월드 +z (차 오른쪽)
     // u축(= +x): 무늬를 −dx 만큼 옮기려면 offset을 +dx/TEX_M 만큼 키운다.

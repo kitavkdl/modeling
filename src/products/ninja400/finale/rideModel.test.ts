@@ -419,7 +419,36 @@ describe('구동계 물리 v2', () => {
     expect(t100).toBeLessThan(6)
   })
 
-  it('28. 고속에서 중립으로 빼면 엔진은 아이들로 내려가고 차는 항력으로만 느려진다', () => {
+  it('28. 1단 리미터 연료 컷의 엔진 브레이크도 뒷바퀴 접지 한계를 넘지 못한다', () => {
+    // 고치기 전: 접지 상한(REAR_DRIVE_N/REAR_BRAKE_N)이 슬립 가지에만 있었다. 직결 가지는
+    // (torque − load)/jEff × MASS·r/ratio를 그대로 차체에 밀어서, 1단 12,300 rpm 연료 컷이
+    // 0.55 g로 차를 세웠다 — 뒷바퀴가 전할 수 있는 몫(900 N = 0.377 g)의 1.5배다.
+    // 실차라면 그 전에 뒤가 미끄러진다.
+    const speed = (12300 / gearRatio(1)) * 2 * Math.PI * REAR_TIRE_R_M / 60   // 20.7 m/s = 74.5 km/h
+    const state = { gear: 1, speed, clutch: 0, rpm: 12300, fuelCut: true }
+    let s = base(state)
+    // 같은 차속의 순수 항력 (중립 타력) — 접지력이 아니라 공기·구름 저항 몫이다
+    let coast = base({ ...state, gear: 0, rpm: IDLE_RPM, fuelCut: false })
+    let worst = 0
+    let worstTyre = 0
+    for (let i = 0; i < 60; i++) {
+      const before = s.speed
+      const beforeCoast = coast.speed
+      s = stepRide(s, idle, 1 / 60)
+      coast = stepRide(coast, idle, 1 / 60)
+      const decel = (before - s.speed) * 60
+      worst = Math.max(worst, decel)
+      worstTyre = Math.max(worstTyre, decel - (beforeCoast - coast.speed) * 60)
+    }
+    // 뒷타이어가 전하는 몫만 떼어 보면 상한(900 N / 243 kg = 0.377 g)에 정확히 맞는다
+    expect(worstTyre / 9.81).toBeLessThanOrEqual(0.38)
+    // 총감속은 거기에 74 km/h의 항력(0.054 g)이 얹힌 값이다 — 0.55 g에서 0.43 g로 내려왔다
+    expect(worst / 9.81).toBeLessThan(0.44)
+    // 그래도 엔진 브레이크는 걸린다 — 상한을 씌웠다고 타력 주행이 되면 안 된다
+    expect(worst / 9.81).toBeGreaterThan(0.3)
+  })
+
+  it('29. 고속에서 중립으로 빼면 엔진은 아이들로 내려가고 차는 항력으로만 느려진다', () => {
     // 사용자 신고: "특히 고속에서 N단으로 바꿨을 때". 6단 140 km/h → 클러치 → N → 클러치 놓기.
     let s = cruising(6, 140 / 3.6)
     s = run(s, { ...idle, clutchKey: true }, 0.4)
@@ -437,7 +466,7 @@ describe('구동계 물리 v2', () => {
     expect(speedKmh(s.speed)).toBeGreaterThan(100)
   })
 
-  it('29. 중립 140 km/h에서 2단을 넣고 클러치를 놓아도 과회전하지 않는다', () => {
+  it('30. 중립 140 km/h에서 2단을 넣고 클러치를 놓아도 과회전하지 않는다', () => {
     // 동기 회전이 16,200 rpm이다. 고치기 전에는 엔진이 끌려 올라가는 대신 차가 1.4 g로 섰다.
     // 지금은 뒷바퀴가 미끄러지는 몫(REAR_BRAKE_N)만 전해지고 회전은 상한 아래에 머문다.
     let s = base({ gear: 2, speed: 140 / 3.6, rpm: IDLE_RPM })
@@ -458,7 +487,7 @@ describe('구동계 물리 v2', () => {
     expect(s.speed).toBeLessThan(140 / 3.6)
   })
 
-  it('30. 어떤 조합으로도 엔진 회전은 기계적 상한(OVERREV_MAX)을 넘지 않는다', () => {
+  it('31. 어떤 조합으로도 엔진 회전은 기계적 상한(OVERREV_MAX)을 넘지 않는다', () => {
     const cases: RideSim[] = [
       base({ gear: 1, speed: 120 / 3.6, rpm: IDLE_RPM }),
       base({ gear: 2, speed: 160 / 3.6, rpm: 11000 }),
@@ -476,7 +505,7 @@ describe('구동계 물리 v2', () => {
     }
   })
 
-  it('31. 3단 60 km/h에서 1단으로 떨어뜨리면 회전이 뛰고 차는 느려진다 — 다만 뒷바퀴 한계 안에서', () => {
+  it('32. 3단 60 km/h에서 1단으로 떨어뜨리면 회전이 뛰고 차는 느려진다 — 다만 뒷바퀴 한계 안에서', () => {
     let s = cruising(3, 60 / 3.6)
     s = run(s, { ...idle, clutchKey: true }, 0.3)
     s = { ...s, gear: 1 }
@@ -496,7 +525,7 @@ describe('구동계 물리 v2', () => {
     expect(worstDecel).toBeLessThan(0.6 * 9.81)
   })
 
-  it('32. 중립 100 km/h 급제동은 0.7~0.95 g로 40~50 m 안에 선다', () => {
+  it('33. 중립 100 km/h 급제동은 0.7~0.95 g로 40~50 m 안에 선다', () => {
     // 고치기 전 BRAKE_N 3200은 1.34 g·30 m였다 — 로드 스포츠가 낼 수 없는 값이다.
     let s = base({ gear: 0, speed: 100 / 3.6, rpm: IDLE_RPM })
     const d0 = s.distance
@@ -517,7 +546,7 @@ describe('구동계 물리 v2', () => {
     expect(Math.abs(s.rpm - IDLE_RPM)).toBeLessThan(20)
   })
 
-  it('33. 시동이 꺼진 채 기어를 물고 있으면 중립 타력보다 빨리 선다', () => {
+  it('34. 시동이 꺼진 채 기어를 물고 있으면 중립 타력보다 빨리 선다', () => {
     // 고치기 전: 꺼지는 순간 구동계를 끊어서 중립 타력과 똑같이 굴러갔다.
     // 실차는 꺼진 엔진의 압축·마찰이 브레이크로 걸린다.
     let geared = base({ gear: 6, speed: 20 / 3.6, rpm: syncRpm(6, 20 / 3.6) })
@@ -534,7 +563,7 @@ describe('구동계 물리 v2', () => {
     expect(geared.rpm).toBe(0)
   })
 
-  it('34. 구르는 중에 다시 걸면 클러치를 놓아도 안 꺼진다 (3단 30 km/h 범프)', () => {
+  it('35. 구르는 중에 다시 걸면 클러치를 놓아도 안 꺼진다 (3단 30 km/h 범프)', () => {
     // 꺼진 상태에서 Starter가 하는 일 그대로: stalled=false·running=true·rpm 0에서 시작
     let s = base({ gear: 3, speed: 30 / 3.6, rpm: 0 })
     s = run(s, { ...idle, clutchKey: true }, 1)
@@ -546,7 +575,7 @@ describe('구동계 물리 v2', () => {
     expect(Math.abs(s.rpm / syncRpm(3, s.speed) - 1)).toBeLessThan(0.05)
   })
 
-  it('35. 중립에서 0.15초 블립은 3,000 언저리까지 갔다 아이들로 돌아온다', () => {
+  it('36. 중립에서 0.15초 블립은 3,000 언저리까지 갔다 아이들로 돌아온다', () => {
     let s = base()
     let peak = 0
     for (let i = 0; i < 9; i++) {
@@ -562,7 +591,7 @@ describe('구동계 물리 v2', () => {
     expect(Math.abs(s.rpm - IDLE_RPM)).toBeLessThan(20)
   })
 
-  it('36. 스로틀을 살짝 열면 회전이 떨어지지 않고 올라간다', () => {
+  it('37. 스로틀을 살짝 열면 회전이 떨어지지 않고 올라간다', () => {
     // 고치기 전: 토크를 개도에 선형으로 곱해서 5~17% 사이는 엔진 브레이크를 못 이겼다 —
     // 스로틀을 조금 여는데 rpm이 내려가는 구멍이 있었다.
     for (const throttle of [0.08, 0.15, 0.3, 0.5]) {

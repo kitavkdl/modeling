@@ -103,7 +103,14 @@ export function registerRealModel(handle: RealHandle): () => void {
   real = handle
   notifyRefine()
   return () => {
-    if (real === handle) real = null
+    if (real !== handle) return
+    // 실물 모델이 사라지는 순간 그쪽 재질에 물린 평면을 떼어 낸다 — clear()는 real을 통해서만
+    // 닿을 수 있어서, real을 비운 뒤에는 영영 못 떼어 낸다. (setPlanes는 함수 선언이라 호이스팅된다)
+    setPlanes(handle.materials, null)
+    real = null
+    // 알리지 않으면 RefineSweep의 check()가 돌지 않아 절차 조립체 쪽 평면이 그대로 남는다 —
+    // 스윕 도중에 RideScene이 내려가면 반쯤 잘린 차가 화면에 남았다.
+    notifyRefine()
   }
 }
 
@@ -145,14 +152,16 @@ export function RefineSweep() {
     [],
   )
 
-  // 로컬 클리핑은 렌더러 전역 스위치다 — 켠 값을 언마운트에서 되돌린다.
+  // 로컬 클리핑은 렌더러 전역 스위치이고, 켜 두는 것만으로 모든 재질의 셰이더가 클리핑 분기를
+  // 달고 돈다. 스윕이 도는 동안에만 켜고 끝나거나 언마운트되면 원래 값으로 되돌린다.
   useEffect(() => {
+    if (!active) return
     const prev = gl.localClippingEnabled
     gl.localClippingEnabled = true
     return () => {
       gl.localClippingEnabled = prev
     }
-  }, [gl])
+  }, [gl, active])
 
   const clear = useCallback(() => {
     setPlanes(procMaterials, null)
@@ -212,8 +221,17 @@ export function RefineSweep() {
     }
   }, [check, store])
 
-  // 언마운트(제품 이탈)에는 반드시 평면을 떼어 낸다 — 재질 인스턴스는 레지스트리에 남는다
-  useEffect(() => clear, [clear])
+  // 언마운트(제품 이탈)에는 평면을 떼어 내고 스윕도 내린다. 재질 인스턴스는 레지스트리에,
+  // refine 싱글턴은 모듈에 남는다 — active를 켠 채 두면 다시 마운트됐을 때 평면 없이 칼날만
+  // 차를 가로질러 지나간다(클리핑이 안 걸린 채 6초).
+  useEffect(
+    () => () => {
+      refine.active = false
+      clear()
+      notifyRefine()
+    },
+    [clear],
+  )
 
   useFrame((_, raw) => {
     if (!refine.active) return

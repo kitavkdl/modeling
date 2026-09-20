@@ -335,12 +335,26 @@ export function stepRide(s: RideSim, input: RideInputs, dt: number): RideSim {
       const slip = omega - sync
       // 직결을 버틸 만한 요구 토크인지 — 저항을 엔진 축으로 환산해서 본다
       const load = (res * r) / ratio
-      if (sync <= OMEGA_OVERREV && Math.abs(slip) <= LOCK_EPS && Math.abs(torque - load) <= cap) {
+      const jEff = J_E + (MASS * r * r) / (ratio * ratio)
+      let locked = sync <= OMEGA_OVERREV && Math.abs(slip) <= LOCK_EPS && Math.abs(torque - load) <= cap
+      /** 직결 판정이 섰지만 뒷타이어가 못 버텨 미끄러지는 스텝에서 노면에 닿는 힘 (N) */
+      let capped: number | null = null
+      if (locked) {
         // 직결 진입 — 남은 회전차는 엔진이 접는다. 차체를 엔진 축으로 환산한 관성이
         // J_E의 17배쯤이라(6단 기준) 붙는 쪽은 엔진이다. 이미 직결이면 slip이 0이라 무연산.
         omega = sync
+        // 직결이라고 해서 접지력이 무한한 것은 아니다. 한 덩어리로 굴렀을 때 접지면이 내야 하는
+        // 힘(차체 가속분 + 저항)을 먼저 재고, REAR_DRIVE_N / REAR_BRAKE_N을 넘으면 이 스텝은
+        // 미끄러진 것으로 본다 — 슬립 가지에만 상한이 있던 탓에 1단 리미터 연료 컷의 엔진
+        // 브레이크가 0.5~0.9 g까지 나왔다(뒷바퀴가 전할 수 있는 몫은 0.37 g뿐이다).
+        const wheel = MASS * (((torque - load) / jEff) * (r / ratio)) + res
+        if (wheel > REAR_DRIVE_N || wheel < -REAR_BRAKE_N) {
+          locked = false
+          capped = wheel > 0 ? REAR_DRIVE_N : -REAR_BRAKE_N
+        }
+      }
+      if (locked) {
         // 직결 — 엔진과 차체가 한 덩어리로 돈다
-        const jEff = J_E + (MASS * r * r) / (ratio * ratio)
         omega += ((torque - load) / jEff) * h
         if (omega < 0) omega = 0
         speed = (omega * r) / ratio
@@ -349,8 +363,13 @@ export function stepRide(s: RideSim, input: RideInputs, dt: number): RideSim {
         // 넘치는 몫은 타이어가 미끄러뜨린다(구동이면 휠스핀, 역구동이면 뒷바퀴가 끽 하고 튄다).
         // 엔진 쪽에도 잘라낸 값을 그대로 돌려줘야 한다 — 미끄러지는 동안은 엔진이 덜 붙잡혀서
         // 오히려 회전이 올라간다. 그래야 고속 저단 투입이 "차가 1 g로 서는" 대신 "뒤가 미끄러진다"가 된다.
-        const wanted = (cap * Math.tanh(slip / SLIP_SOFT) * ratio) / r
-        const force = wanted > REAR_DRIVE_N ? REAR_DRIVE_N : wanted < -REAR_BRAKE_N ? -REAR_BRAKE_N : wanted
+        // capped는 위에서 직결이 접지력을 넘겨 떨어져 나온 경우다 — 그때 omega는 이미 동기속도에
+        // 붙어 있고(운동량은 그대로), 여기서부터 엔진만 따로 돈다.
+        let force = capped
+        if (force === null) {
+          const wanted = (cap * Math.tanh(slip / SLIP_SOFT) * ratio) / r
+          force = wanted > REAR_DRIVE_N ? REAR_DRIVE_N : wanted < -REAR_BRAKE_N ? -REAR_BRAKE_N : wanted
+        }
         omega += ((torque - (force * r) / ratio) / J_E) * h
         if (omega < 0) omega = 0
         if (omega > OMEGA_OVERREV) omega = OMEGA_OVERREV

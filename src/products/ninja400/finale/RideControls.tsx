@@ -36,6 +36,10 @@ export function RideControls() {
     }
     const onKeyDown = (e: KeyboardEvent) => {
       if (typing(e.target)) return
+      // Ctrl/Cmd/Alt가 끼어 있으면 브라우저·OS의 단축키다 (Ctrl+D 북마크, Cmd+F 찾기,
+      // Alt+←/→ 뒤로·앞으로). 조작으로 삼지도, preventDefault로 가로채지도 않는다.
+      // keyup은 걸러 내지 않는다 — 누른 뒤에 Ctrl을 짚었다 떼면 키가 눌린 채 얼어붙는다.
+      if (e.ctrlKey || e.metaKey || e.altKey) return
       switch (e.code) {
         case 'ArrowUp':
           e.preventDefault()

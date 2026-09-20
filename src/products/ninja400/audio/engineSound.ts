@@ -11,8 +11,15 @@
 //   흡기 그로울 (대역잡음 × 점화주파수 AM) ──────────┤
 //   감속 버블 (300 Hz 짧은 팝) ──────────────────────┴→ loopBus(시동·정지 페이드)
 //   loopBus → loadShelf(120 Hz, 부하 +1.5 dB) → antiAlias(9k, 피치업 1.4배 위에서 7k)
-//           → tone(lowpass, Q는 부하가 낮춘다) → toneGain → master → compressor → destination
+//           → tone(lowpass, Q는 부하가 낮춘다) → toneGain → master(0.19) → compressor → destination
 //   start.ogg / stop.ogg 원샷 ─────────────────────────────────────────→ master ┘
+//
+// v5.1에서 고친 것 — 헤드룸:
+//   master가 0.8이던 때 9000 rpm 전개·물린 기어의 피크가 +9.6 dBFS로 나갔다(아래 MASTER_GAIN의
+//   계산 참조). 기본값 DynamicsCompressor(threshold −24, ratio 12)가 그것을 통째로 눌러서
+//   아이들과 전개의 차이가 사라졌다 — "무슨 짓을 해도 같은 크기"다. master를 0.19로 내려
+//   피크를 −3 dBFS에 두고, 컴프레서는 −10 dB/4:1로 느슨하게 잡아 과도부만 받게 했다.
+//   대신 아이들이 −34 dBFS 아래로 내려가서 닫힌 스로틀의 톤 바닥을 −7 → −5 dB로 올렸다.
 //
 // 매 tick(25 ms)마다 pickLoop로 칸 하나를 고르고, 그 소스들의 playbackRate를 rpm/루프rpm으로
 // 끌고 간다. 칸이 바뀔 때만 새 칸을 걸고 0.25초 등파워 교차 페이드한 뒤 옛 칸을 끊는다.
@@ -39,6 +46,7 @@ import {
   createNoiseBuffer,
   dbToGain,
   loopShelfDb,
+  LOOP_RMS_DBFS,
   LOOP_SHELF_HZ,
   rpmSlope,
   updateBurbleLayer,
@@ -55,8 +63,33 @@ import { pickLoop, type Loop } from './pickLoop'
 const BANK_DIR = '/audio/ninja400/engine/'
 /** 슬롯 갱신 주기 (ms) */
 const TICK_MS = 25
-/** 최종 출력 배율 — 루프는 −18 dBFS RMS로 정규화돼 있다 */
-const MASTER_GAIN = 0.8
+/**
+ * 최종 출력 배율. 9000 rpm 전개·물린 기어의 **피크가 −3 dBFS**에 서도록 잡았다.
+ *
+ * 뱅크 루프는 −18 dBFS RMS / −1 dBFS 피크로 정규화돼 있다(build-engine-bank.py의
+ * TARGET_RMS_DBFS·PEAK_CEIL_DBFS). 그 위로 master 앞까지 쌓이는 이득:
+ *
+ *   보이스 둘   2 × 0.7071 = 1.414 (기본파가 위상 정렬이라 동상으로 더해진다)  +3.0 dB
+ *   레벨 LFO    꼭대기                                                        +2.0 dB
+ *   loopShelf   7500 rpm 위                                                   +3.0 dB
+ *   loadShelf   부하 1                                                        +1.5 dB
+ *   tone        −5 + 5·1 + 3·1                                                +3.0 dB
+ *                                                                     합계  +12.5 dB
+ *
+ *   피크(master 전) = −1 + 12.5 = +11.5 dBFS
+ *   MASTER_GAIN = 10^((−3 − 11.5)/20) = 10^(−14.5/20) = 0.188 → 0.19 (−14.42 dB)
+ *   → 피크 −2.9 dBFS · RMS −19.9 dBFS
+ *
+ * 0.8(−1.94 dB)이던 때는 피크가 +9.6 dBFS였다. 기본 컴프레서(threshold −24, ratio 12)가
+ * 그 13 dB를 통째로 먹어서 아이들과 전개의 폭이 남지 않았다.
+ */
+const MASTER_GAIN = 0.19
+/**
+ * 컴프레서 — 기본값(threshold −24 dB, knee 30, ratio 12, release 0.25)은 리미터에 가깝다.
+ * 여기서는 −10 dB/4:1로 느슨하게 두어 **과도부(변속 블립·시동)만** 받는다.
+ * 전개 RMS가 −19.9 dBFS라 무릎 아래(−16 dB)에 있어서 정상 주행에는 아예 걸리지 않는다.
+ */
+export const COMPRESSOR = { threshold: -10, knee: 12, ratio: 4, attack: 0.005, release: 0.12 } as const
 /** stop()의 루프 페이드아웃 (초) */
 const STOP_FADE_S = 0.15
 /** start.ogg가 점화에 닿는 시점(초)과 루프 페이드인 길이(초) */
@@ -80,9 +113,14 @@ const TONE_TAU_CLOSE = 0.12
 /** 머플러 저역통과 (Hz): 스로틀 0 → 1100, 1 → 7000 */
 const TONE_HZ_BASE = 1100
 const TONE_HZ_SPAN = 5900
-/** 톤 게인 (dB): 스로틀 0 → −7, 1 → 0, 부하 1이면 +3 */
-const TONE_DB_BASE = -7
-const TONE_DB_THROTTLE = 7
+/**
+ * 톤 게인 (dB): 스로틀 0 → −5, 1 → 0, 부하 1이면 +3.
+ * 바닥이 −7이던 때는 master를 0.19로 내리자 아이들 RMS가 −18 + 5 − 7 − 14.42 = −34.4 dBFS로
+ * 떨어져 들리지 않았다. −5로 올려 −32.4 dBFS에 둔다 — 전개 꼭대기(0 dB)는 그대로라
+ * MASTER_GAIN의 계산은 건드리지 않는다(span을 7 → 5로 같이 줄였다).
+ */
+const TONE_DB_BASE = -5
+const TONE_DB_THROTTLE = 5
 const TONE_DB_LOAD = 3
 /** 톤 저역통과 Q: 기본 1.0, 부하 1이면 0.7 — 물린 기어에서는 공진을 죽여 둔탁하게 민다 */
 const TONE_Q_BASE = 1.0
@@ -125,6 +163,33 @@ export function toneFor(throttle: number, load: number): { lowpassHz: number; ga
     q: TONE_Q_BASE - TONE_Q_LOAD * ld,
   }
 }
+
+/** 뱅크 루프의 피크 상한 (dBFS) — build-engine-bank.py의 PEAK_CEIL_DBFS */
+export const LOOP_PEAK_DBFS = -1
+/** 보이스 둘이 더하는 몫 (dB): 2 × 0.7071 = +3.0 (동상) 에 레벨 LFO 꼭대기 +2.0 */
+export const VOICE_SUM_DB = 20 * Math.log10(2 * VOICE_GAIN) + VOICE_LFO_DB
+
+/**
+ * master 앞까지 루프 체인이 더하는 이득 (dB). MASTER_GAIN 주석의 표를 그대로 코드로 옮긴 것이라,
+ * 상수 하나만 바뀌어도 engineSound.test.ts의 헤드룸 못이 어긋난다.
+ * 보이스 몫은 LFO 꼭대기를 포함한 최악값이다.
+ */
+export function loopChainDb(rpm: number, throttle: number, load: number): number {
+  return (
+    VOICE_SUM_DB +
+    loopShelfDb(rpm) +
+    LOAD_SHELF_DB * clamp01(load) +
+    20 * Math.log10(toneFor(throttle, load).gain)
+  )
+}
+
+/** destination에 닿는 피크 (dBFS) */
+export const peakDbfs = (rpm: number, throttle: number, load: number): number =>
+  LOOP_PEAK_DBFS + loopChainDb(rpm, throttle, load) + 20 * Math.log10(MASTER_GAIN)
+
+/** destination에 닿는 RMS (dBFS) */
+export const rmsDbfs = (rpm: number, throttle: number, load: number): number =>
+  LOOP_RMS_DBFS + loopChainDb(rpm, throttle, load) + 20 * Math.log10(MASTER_GAIN)
 
 /**
  * 톤을 끌고 갈 시정수 (초). 스로틀을 열 때는 30 ms로 튀어나오고 닫을 때는 120 ms로 잦아든다 —
@@ -255,6 +320,11 @@ function audioContext(): AudioContext | null {
   if (ctx) return ctx
   ctx = new AC()
   const compressor = ctx.createDynamicsCompressor()
+  compressor.threshold.value = COMPRESSOR.threshold
+  compressor.knee.value = COMPRESSOR.knee
+  compressor.ratio.value = COMPRESSOR.ratio
+  compressor.attack.value = COMPRESSOR.attack
+  compressor.release.value = COMPRESSOR.release
   compressor.connect(ctx.destination)
   master = ctx.createGain()
   master.gain.value = MASTER_GAIN

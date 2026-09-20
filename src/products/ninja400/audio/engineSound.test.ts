@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  COMPRESSOR,
   blip,
   fadeCurve,
+  loopChainDb,
   fadeSeconds,
+  peakDbfs,
   preload,
+  rmsDbfs,
   safeRpm,
   setLoad,
   setRpm,
@@ -37,11 +41,12 @@ describe('톤', () => {
     expect(toneFor(1, 0).lowpassHz).toBe(7000)
     expect(toneFor(0.5, 0).lowpassHz).toBe(4050)
   })
-  it('게인은 스로틀 0에서 −7dB, 1에서 0dB, 부하 1이면 +3dB', () => {
-    expect(20 * Math.log10(toneFor(0, 0).gain)).toBeCloseTo(-7, 6)
+  // 바닥은 −7이었다. master를 0.8 → 0.19로 내리면서 아이들이 −34.4 dBFS로 가라앉아 −5로 올렸다
+  it('게인은 스로틀 0에서 −5dB, 1에서 0dB, 부하 1이면 +3dB', () => {
+    expect(20 * Math.log10(toneFor(0, 0).gain)).toBeCloseTo(-5, 6)
     expect(20 * Math.log10(toneFor(1, 0).gain)).toBeCloseTo(0, 6)
     expect(20 * Math.log10(toneFor(1, 1).gain)).toBeCloseTo(3, 6)
-    expect(20 * Math.log10(toneFor(0, 1).gain)).toBeCloseTo(-4, 6)
+    expect(20 * Math.log10(toneFor(0, 1).gain)).toBeCloseTo(-2, 6)
   })
   it('부하는 저역통과의 공진을 낮춘다 — 1.0에서 0.7로', () => {
     expect(toneFor(0.5, 0).q).toBeCloseTo(1.0, 10)
@@ -52,6 +57,38 @@ describe('톤', () => {
     expect(toneFor(NaN, NaN)).toEqual(toneFor(0, 0))
     expect(toneFor(5, 5)).toEqual(toneFor(1, 1))
     expect(toneFor(-3, -3)).toEqual(toneFor(0, 0))
+  })
+})
+
+describe('헤드룸', () => {
+  // 9000 rpm 전개 · 물린 기어 = 루프 체인이 가장 크게 나가는 자리
+  it('루프 체인은 master 앞에서 +12.5 dB를 더한다', () => {
+    // 보이스 +5 · loopShelf +3 · loadShelf +1.5 · tone +3
+    expect(loopChainDb(9000, 1, 1)).toBeCloseTo(12.51, 2)
+  })
+
+  it('9000 rpm 전개의 피크가 −3 dBFS 언저리에 선다 — 컴프레서가 먹기 전에', () => {
+    const peak = peakDbfs(9000, 1, 1)
+    expect(peak).toBeGreaterThan(-4)
+    expect(peak).toBeLessThan(-2)
+    // 0 dBFS를 넘기지 않는 것이 요점이다 (고치기 전 +9.6 dBFS)
+    expect(peak).toBeLessThan(0)
+  })
+
+  it('그 상태의 RMS는 컴프레서 무릎 아래에 있다 — 정상 주행에는 안 걸린다', () => {
+    const kneeBottom = COMPRESSOR.threshold - COMPRESSOR.knee / 2
+    expect(rmsDbfs(9000, 1, 1)).toBeLessThan(kneeBottom)
+  })
+
+  it('아이들이 −34 dBFS 아래로 가라앉지 않는다', () => {
+    const idleRms = rmsDbfs(1300, 0, 0)
+    expect(idleRms).toBeGreaterThan(-34)
+    // 아이들과 전개 사이에 12 dB 넘는 폭이 남아 있어야 스로틀이 들린다 (지금 12.5 dB)
+    expect(rmsDbfs(9000, 1, 1) - idleRms).toBeGreaterThan(12)
+  })
+
+  it('컴프레서는 리미터가 아니라 과도부만 받는다', () => {
+    expect(COMPRESSOR).toEqual({ threshold: -10, knee: 12, ratio: 4, attack: 0.005, release: 0.12 })
   })
 })
 
