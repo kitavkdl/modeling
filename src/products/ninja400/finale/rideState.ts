@@ -26,7 +26,8 @@ export const ride: RideState = {
   clutch: 0,
   brake: 0,
   stalled: false,
-  wheelRpm: 0,
+  speed: 0,
+  distance: 0,
   running: false,
   lowRpmFor: 0,
   shiftKick: 0,
@@ -50,7 +51,8 @@ export function resetRide(): void {
   ride.clutch = 0
   ride.brake = 0
   ride.stalled = false
-  ride.wheelRpm = 0
+  ride.speed = 0
+  ride.distance = 0
   ride.running = false
   ride.lowRpmFor = 0
   ride.shiftKick = 0

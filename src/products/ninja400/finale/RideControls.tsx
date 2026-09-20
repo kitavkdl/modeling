@@ -102,7 +102,8 @@ export function RideControls() {
     ride.throttle = next.throttle
     ride.clutch = next.clutch
     ride.brake = next.brake
-    ride.wheelRpm = next.wheelRpm
+    ride.speed = next.speed
+    ride.distance = next.distance
     ride.stalled = next.stalled
     ride.lowRpmFor = next.lowRpmFor
     if (ride.shiftKick !== 0) {

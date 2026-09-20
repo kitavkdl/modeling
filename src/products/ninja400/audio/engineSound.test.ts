@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { IDLE_RPM, MAX_RPM } from '../finale/rideModel'
 import { firingTimes, pulseFor, resonanceFor } from './engineSound'
 
 describe('engine firing schedule', () => {
@@ -19,8 +20,8 @@ describe('engine sound v2 parameters', () => {
     expect(resonanceFor(1).lowpassHz).toBe(2600)
   })
   it('펄스 감쇠는 rpm이 오를수록 짧아지고(20ms→8ms) 부하가 걸리면 세진다', () => {
-    expect(pulseFor(1300, 0).decayS).toBeCloseTo(0.02, 3)
-    expect(pulseFor(10000, 0).decayS).toBeCloseTo(0.008, 3)
+    expect(pulseFor(IDLE_RPM, 0).decayS).toBeCloseTo(0.02, 3)
+    expect(pulseFor(MAX_RPM, 0).decayS).toBeCloseTo(0.008, 3)
     expect(pulseFor(3000, 1).gain).toBeCloseTo(pulseFor(3000, 0).gain * 1.3, 5)
   })
 })

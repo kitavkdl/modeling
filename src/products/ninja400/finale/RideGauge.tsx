@@ -7,7 +7,7 @@ import { ride } from './rideState'
 // 다시 그려지므로 100ms 간격으로 폴링해서 필요한 값만 복사한다.
 
 /** 눈금 상한 (rpm). 리미터보다 조금 위까지만 그린다 */
-const BAR_MAX = 11000
+const BAR_MAX = 13000
 /** 레드존 시작 = 리미터 (rpm). 전개로 감으면 채움이 정확히 이 눈금에 닿는다 */
 const REDLINE = MAX_RPM
 const POLL_MS = 100

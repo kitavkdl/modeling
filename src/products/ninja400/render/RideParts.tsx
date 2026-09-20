@@ -4,6 +4,7 @@ import type * as THREE from 'three'
 import { useMaterials } from '../../../engine/context'
 import { PartGeometry } from '../../../engine/geometry/PartGeometry'
 import { MM, type RenderInstanceCtx } from '../../../engine/types'
+import { wheelRpm } from '../finale/rideModel'
 import { ride } from '../finale/rideState'
 
 // 주행 중에 움직이는 부품들. 전부 ride 싱글턴을 매 프레임 읽기만 한다.
@@ -59,8 +60,8 @@ export function Spinner(ctx: RenderInstanceCtx) {
   const spin = useRef<THREE.Group>(null)
   useFrame((_, raw) => {
     const g = spin.current
-    if (!g || ride.wheelRpm === 0) return
-    g.rotation.z -= ride.wheelRpm * RAD_PER_RPM * Math.min(raw, MAX_DT)
+    if (!g || ride.speed === 0) return
+    g.rotation.z -= wheelRpm(ride.speed) * RAD_PER_RPM * Math.min(raw, MAX_DT)
   })
   return (
     <group ref={spin}>
