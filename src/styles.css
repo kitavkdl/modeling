@@ -297,16 +297,26 @@ body,
 .select-meta { margin-top: 10px; font-size: 11px; color: var(--fg-dim); letter-spacing: 0.04em; }
 
 /* --- Ride gauge ----------------------------------------------------------- */
-.gauge { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 2px; }
-.gauge-top { display: flex; align-items: baseline; gap: 14px; }
-.gauge-speed { font-size: 56px; line-height: 1; letter-spacing: 0.01em; font-variant-numeric: tabular-nums; color: var(--fg); }
-.gauge-speed > b { font-size: 11px; font-weight: 400; letter-spacing: 0.12em; color: var(--fg-dim); margin-left: 6px; }
-.gauge-gear { font-size: 32px; line-height: 1; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; color: var(--fg); }
-.gauge-bar { position: relative; width: 220px; height: 6px; border: 1px solid var(--line); }
-.gauge-bar > i { display: block; height: 100%; background: var(--fg-dim); transition: width 100ms linear; }
-.gauge-bar.over > i { background: var(--fg); }
-.gauge-redline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line-strong); }
-.gauge-rpm { font-size: 11px; letter-spacing: 0.08em; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+/* 아날로그 회전계. 0~13(×1000 rpm)을 240°(−120°~+120°)로 훑고, 0이 좌하·13이 우하다.
+   바늘은 리액트 밖에서 rAF로 transform만 덮어쓰므로 CSS transition을 걸지 않는다. */
+.gauge { --gauge-red: #c2453c; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px 10px 10px; border: 1px solid var(--line); border-radius: 2px; }
+.gauge-dial { display: block; font-family: var(--font); }
+.gauge-face { fill: var(--panel); stroke: var(--line); stroke-width: 1; }
+.gauge-redzone { fill: none; stroke: var(--gauge-red); stroke-width: 3; }
+.gauge-tick-minor { stroke: var(--fg-faint); stroke-width: 1; }
+.gauge-tick-major { stroke: var(--line-strong); stroke-width: 2; }
+.gauge-tick-major.over { stroke: var(--gauge-red); }
+.gauge-num { fill: var(--fg-dim); font-size: 11px; letter-spacing: 0.04em; font-variant-numeric: tabular-nums; }
+/* SVG 요소의 CSS transform 기준점을 viewBox 좌표(220×220)의 다이얼 중심에 못 박는다 */
+.gauge-needle { transform-box: view-box; transform-origin: 110px 110px; }
+.gauge-needle > line { stroke: #e6e6e6; stroke-width: 2; stroke-linecap: round; }
+.gauge-hub { fill: #e6e6e6; }
+.gauge-readout { fill: var(--fg); }
+.gauge-speed { font-size: 34px; font-variant-numeric: tabular-nums; }
+.gauge-unit { font-size: 9px; letter-spacing: 0.12em; fill: var(--fg-dim); }
+.gauge-gear { font-size: 20px; letter-spacing: 0.04em; }
+.gauge-rpm { fill: var(--fg-dim); font-size: 10px; letter-spacing: 0.08em; font-variant-numeric: tabular-nums; }
+.gauge-rpm.over { fill: var(--gauge-red); }
 .gauge-lamps { display: flex; gap: 10px; font-size: 10px; letter-spacing: 0.12em; color: var(--fg-dim); }
 .gauge-lamps > span.on { color: var(--fg); }
 .gauge-note { font-size: 11px; letter-spacing: 0.02em; color: var(--fg); }

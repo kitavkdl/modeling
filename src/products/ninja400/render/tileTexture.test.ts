@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
+  accentLines,
   drawTiles,
+  GROUT_ACCENT_COLOR,
   GROUT_COLOR,
   GROUT_MM,
   ROAD_M,
@@ -30,11 +32,13 @@ function recorder(): { ctx: TileCtx; calls: Call[] } {
 
 const SIZE = 1024
 const TILES = TILES_PER_TEX
+/** 밝은 줄눈은 격자선 하나마다 세로·가로 두 번 그린다 */
+const ACCENTS = accentLines(TILES).length * 2
 
 describe('tileTexture 상수', () => {
-  it('타일 600 mm · 줄눈 15 mm · 텍스처 4.8 m · 도로 60 m', () => {
+  it('타일 600 mm · 줄눈 24 mm · 텍스처 4.8 m · 도로 60 m', () => {
     expect(TILE_MM).toBe(600)
-    expect(GROUT_MM).toBe(15)
+    expect(GROUT_MM).toBe(24)
     expect(TILES_PER_TEX).toBe(8)
     expect(TEX_M).toBeCloseTo(4.8, 10)
     expect(ROAD_M).toBe(60)
@@ -42,10 +46,28 @@ describe('tileTexture 상수', () => {
 })
 
 describe('drawTiles', () => {
-  it('바탕 1 + 타일 tiles² 번 그린다', () => {
+  it('바탕 1 + 타일 tiles² + 밝은 줄눈만큼 그린다', () => {
     const { ctx, calls } = recorder()
     drawTiles(ctx, SIZE, TILES)
-    expect(calls).toHaveLength(TILES * TILES + 1)
+    expect(calls.length).toBeGreaterThanOrEqual(TILES * TILES + 1)
+    expect(calls).toHaveLength(TILES * TILES + 1 + ACCENTS)
+    expect(calls.filter((c) => c.style === GROUT_ACCENT_COLOR)).toHaveLength(ACCENTS)
+  })
+
+  it('밝은 줄눈은 4칸마다 한 줄이고 텍스처 가장자리를 물지 않는다', () => {
+    expect(accentLines(TILES)).toEqual([2, 6])
+    const { ctx, calls } = recorder()
+    drawTiles(ctx, SIZE, TILES)
+    const groutPx = (GROUT_MM / (TILE_MM * TILES)) * SIZE
+    const accents = calls.filter((c) => c.style === GROUT_ACCENT_COLOR)
+    for (const { rect } of accents) {
+      const [x, y, w, h] = rect
+      // 한쪽은 줄눈 폭, 다른 쪽은 텍스처 전체를 가로지른다
+      expect(w === groutPx ? h : w).toBe(SIZE)
+      expect(Math.min(w, h)).toBeCloseTo(groutPx, 6)
+      expect(Math.min(x, y)).toBeGreaterThanOrEqual(0)
+      expect(Math.max(x + w, y + h)).toBeLessThanOrEqual(SIZE)
+    }
   })
 
   it('첫 호출은 줄눈 색으로 정사각형 전체를 덮는다', () => {
@@ -60,7 +82,7 @@ describe('drawTiles', () => {
     drawTiles(ctx, SIZE, TILES)
     const cell = SIZE / TILES
     const groutPx = (GROUT_MM / (TILE_MM * TILES)) * SIZE
-    for (const { rect } of calls.slice(1)) {
+    for (const { rect } of calls.slice(1, 1 + TILES * TILES)) {
       const [x, y, w, h] = rect
       expect(w).toBeCloseTo(cell - groutPx, 6)
       expect(h).toBeCloseTo(cell - groutPx, 6)
@@ -74,11 +96,14 @@ describe('drawTiles', () => {
   it('타일마다 해시로 명도가 갈려 색이 한 가지가 아니다', () => {
     const { ctx, calls } = recorder()
     drawTiles(ctx, SIZE, TILES)
-    const styles = new Set(calls.slice(1).map((c) => c.style))
+    const styles = new Set(calls.slice(1, 1 + TILES * TILES).map((c) => c.style))
     expect(styles.size).toBeGreaterThanOrEqual(2)
-    // 기준색에서 ±6% 안이라 여전히 어두운 회색이다
+    // 기준색에서 ±8% 안이라 여전히 어두운 회색이다
     for (const s of styles) expect(s).toMatch(/^#[0-9a-f]{6}$/)
-    expect(TILE_COLOR).toBe('#1a1b1e')
+    expect(TILE_COLOR).toBe('#1d1f24')
+    // 줄눈이 타일보다 밝아야 격자가 읽힌다
+    expect(parseInt(GROUT_COLOR.slice(1), 16)).toBeGreaterThan(parseInt(TILE_COLOR.slice(1), 16))
+    expect(parseInt(GROUT_ACCENT_COLOR.slice(1), 16)).toBeGreaterThan(parseInt(GROUT_COLOR.slice(1), 16))
   })
 
   it('두 번 그려도 같은 결과다 (Math.random 없음)', () => {

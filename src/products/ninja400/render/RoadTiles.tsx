@@ -18,8 +18,11 @@ const REPEAT = ROAD_M / TEX_M
 /** 기존 Floor(y = -0.002)와 겹치지 않게 살짝 띄운다 (씬 단위) */
 /** 타일 평면 높이 (scene units): 엔진 Floor(−0.002) 위, 접촉 그림자(0.001) 아래 — 그림자가 가려지지 않게 (R-5) */
 const ROAD_Y = 0.0005
-/** 안개 밀도: 스펙은 m 기준 0.045(≈22 m에서 63%). 씬 단위로 환산하면 ×0.01 */
-const FOG_DENSITY = 0.045 * M_PER_UNIT
+/**
+ * 안개 밀도 (1/m → 씬 단위로 ×0.01). 0.045는 22 m 앞을 거의 다 먹어서 타일이 몇 줄 안 보였다.
+ * 0.03이면 33 m까지 남는다 — 격자가 더 멀리 보여야 속도가 읽힌다.
+ */
+const FOG_DENSITY = 0.03 * M_PER_UNIT
 /** 장면 배경과 같은 색이라야 멀리가 배경에 녹는다 */
 const FOG_COLOR = '#0A0A0B'
 
@@ -50,7 +53,9 @@ function Tiles() {
   })
 
   return (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, ROAD_Y, 0]} receiveShadow>
+    // 그림자 카메라 범위(±2.4 m) 안쪽만 그림자 샘플링으로 살짝 어두워져 네모 판처럼 보였다 —
+    // 접촉 그림자만으로 충분하다.
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, ROAD_Y, 0]} receiveShadow={false}>
       <planeGeometry args={[ROAD_U, ROAD_U]} />
       <meshStandardMaterial map={texture} roughness={0.95} metalness={0} />
     </mesh>
