@@ -1,8 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { blip, loopGains, preload, safeRpm, setLoad, setRpm, setThrottle, start, stop, stopPlan, toneFor } from './engineSound'
+import {
+  blip,
+  fadeCurve,
+  fadeSeconds,
+  preload,
+  safeRpm,
+  setLoad,
+  setRpm,
+  setThrottle,
+  start,
+  stop,
+  stopPlan,
+  toneFor,
+} from './engineSound'
 
-// v3는 실녹음 루프를 재생한다. 오디오 그래프는 노드 환경(window 없음)에서 만들어지지 않으므로
-// 값을 정하는 순수 함수만 여기서 못박는다. 슬롯 상태 기계는 slotPlan.test.ts가 맡는다.
+// v4는 실녹음 루프를 한 번에 하나만 재생한다. 오디오 그래프는 노드 환경(window 없음)에서
+// 만들어지지 않으므로 값을 정하는 순수 함수만 여기서 못박는다. 칸 고르기는 pickLoop.test.ts가 맡는다.
 
 describe('회전수 정리', () => {
   it('유한하지 않거나 0 이하면 0 — playbackRate가 0이 될 수 없어 루프를 내려야 한다', () => {
@@ -32,18 +45,53 @@ describe('톤', () => {
   })
 })
 
-describe('루프 크로스페이드 게인', () => {
-  it('등파워 — 제곱합이 항상 1', () => {
-    for (let t = 0; t <= 1.0001; t += 0.05) {
-      const { lower, upper } = loopGains(t)
-      expect(lower * lower + upper * upper).toBeCloseTo(1, 10)
+describe('교차 페이드 곡선', () => {
+  it('등파워 — 들어오는 쪽과 나가는 쪽의 제곱합이 어느 지점에서나 1', () => {
+    // 겹치는 250 ms 동안 소리가 꺼지거나 부풀면 그것도 한 번씩 '왕' 하는 것으로 들린다
+    for (const from of [1, 0.9, 0.5, 0.2, 0]) {
+      const rise = fadeCurve(from, true)
+      const fall = fadeCurve(from, false)
+      expect(rise).toHaveLength(fall.length)
+      for (let i = 0; i < rise.length; i++) {
+        expect(rise[i] * rise[i] + fall[i] * fall[i]).toBeCloseTo(1, 6)
+      }
     }
   })
-  it('t=0이면 lower만, t=1이면 upper만', () => {
-    expect(loopGains(0).lower).toBeCloseTo(1, 10)
-    expect(loopGains(0).upper).toBeCloseTo(0, 10)
-    expect(loopGains(1).lower).toBeCloseTo(0, 10)
-    expect(loopGains(1).upper).toBeCloseTo(1, 10)
+
+  it('나가는 쪽은 지금 값에서 0으로, 들어오는 쪽은 그 짝에서 1로 — 페이드 도중에 끼어들어도 이어진다', () => {
+    const from = 0.6
+    const rise = fadeCurve(from, true)
+    const fall = fadeCurve(from, false)
+    expect(fall[0]).toBeCloseTo(from, 6)
+    expect(fall[fall.length - 1]).toBeCloseTo(0, 6)
+    expect(rise[0]).toBeCloseTo(Math.sqrt(1 - from * from), 6)
+    expect(rise[rise.length - 1]).toBeCloseTo(1, 6)
+  })
+
+  it('두 곡선 모두 단조롭다 (되돌아가지 않는다)', () => {
+    const rise = fadeCurve(0.8, true)
+    const fall = fadeCurve(0.8, false)
+    for (let i = 1; i < rise.length; i++) {
+      expect(rise[i]).toBeGreaterThanOrEqual(rise[i - 1])
+      expect(fall[i]).toBeLessThanOrEqual(fall[i - 1])
+    }
+  })
+})
+
+describe('남은 페이드 길이', () => {
+  it('게인 1(온전히 울리는 칸)에서 시작하면 0.25초를 다 쓴다', () => {
+    expect(fadeSeconds(1)).toBeCloseTo(0.25, 10)
+  })
+
+  it('이미 내려와 있으면 남은 각도만큼만 쓴다', () => {
+    expect(fadeSeconds(Math.cos(Math.PI / 4))).toBeCloseTo(0.125, 10)
+    expect(fadeSeconds(0)).toBeCloseTo(0.03, 10) // 0이면 길이 0이 되므로 최소 30 ms
+  })
+
+  it('범위 밖·NaN은 0~1로 눌린다', () => {
+    expect(fadeSeconds(NaN)).toBe(fadeSeconds(0))
+    expect(fadeSeconds(2)).toBe(fadeSeconds(1))
+    expect(fadeSeconds(-1)).toBe(fadeSeconds(0))
   })
 })
 

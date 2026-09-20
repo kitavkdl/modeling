@@ -1,17 +1,20 @@
-// 엔진 사운드 v3 — 합성을 버리고 실녹음 루프(public/audio/ninja400/engine/)를 크로스페이드한다.
-// 뱅크는 rpm 사다리(1330~6460)로 잘라 둔 이음매 없는 모노 루프 + 시동·정지 원샷이다.
+// 엔진 사운드 v4 — 실녹음 루프(public/audio/ninja400/engine/)를 한 번에 하나만 재생한다.
+// 뱅크는 rpm 사다리(1325~6495)로 잘라 둔 이음매 없는 모노 루프 + 시동·정지 원샷이고,
+// 각 칸의 rpm은 반올림하지 않은 실측값이다(bank.json, 소수 첫째 자리).
 // 그래프:
-//   루프 슬롯 A ─ gainA ┐
-//   루프 슬롯 B ─ gainB ┴→ loopBus ─→ tone(lowpass) ─→ toneGain ─→ master ─→ compressor ─→ destination
-//   start.ogg / stop.ogg 원샷 ───────────────────────────────────→ master ┘
-// 매 tick(25 ms)마다 rpm을 감싸는 루프 두 개를 bankMix로 고르고, 각 소스의 playbackRate를
-// rpm/루프rpm으로 끌고 가면서 등파워(cos/sin)로 섞는다. 최고 루프 위(6460~12000)는 그대로
-// 피치업(최대 1.86배)하고, 비율에 상한을 두지 않는다.
+//   루프(활성) ─ gain ┐
+//   루프(교체 중) ─ gain ┴→ loopBus ─→ antiAlias(9k) ─→ tone(lowpass) ─→ toneGain ─→ master ─→ compressor ─→ destination
+//   start.ogg / stop.ogg 원샷 ──────────────────────────────────────────────────────→ master ┘
+// 매 tick(25 ms)마다 pickLoop로 칸 하나를 고르고, 그 소스의 playbackRate를 rpm/루프rpm으로
+// 끌고 간다. 칸이 바뀔 때만 새 소스를 걸고 0.25초 등파워 교차 페이드한 뒤 옛 소스를 끊는다.
+// v3는 이웃 두 칸을 늘 겹쳐 울렸는데, 뱅크 rpm이 10 단위로 반올림돼 있어 두 소스의 기본파가
+// 1%쯤 어긋났고 그게 초당 1회 부푸는 맥놀이("왕(쉬고)왕")가 됐다. 이제 겹치는 250 ms 동안에도
+// 두 소스가 같은 목표 rpm으로 울리고, 뱅크 rpm이 정밀하니 그 사이 맥놀이는 무시할 수준이다.
+// 최고 루프 위(6495~12000)는 그대로 피치업(최대 1.85배)하고, 비율에 상한을 두지 않는다.
 // rpm은 바깥(주행 모델)에서 setRpm으로 들어온다.
 
 import { IDLE_RPM } from '../finale/rideModel'
-import { bankMix, type Loop } from './bankMix'
-import { planSlots, type SlotHeld } from './slotPlan'
+import { pickLoop, type Loop } from './pickLoop'
 
 /** 뱅크가 놓인 곳 (Vite가 public/ 그대로 복사한다) */
 const BANK_DIR = '/audio/ninja400/engine/'
@@ -28,8 +31,15 @@ const START_FADE_S = 0.3
 const BUS_DROP_S = 0.02
 /** stop() 뒤 컨텍스트를 재우기 전 여유 (초) */
 const SUSPEND_PAD_S = 0.05
-/** 슬롯을 갈아 끼울 때 옛 소스를 지우는 시간 (초) */
+/** 소스를 급히 거둘 때 지우는 시간 (초) — 정지·중복 교체 때만 쓴다 */
 const SLOT_FADE_S = 0.03
+/** 칸을 갈아탈 때 등파워 교차 페이드 (초). 이 동안만 두 소스가 겹친다 */
+const SWITCH_FADE_S = 0.25
+/** 교차 페이드 곡선을 그릴 점 개수 */
+const FADE_POINTS = 33
+/** 루프 버스 앤티에일리어싱 저역통과 (Hz, 2극). 뱅크 위로 1.6~1.9배 피치업할 때 생기는
+ *  리샘플링 에일리어싱이 고역에서 거칠게 들리는 것을 부드럽게 덮는다 */
+const LOOP_LPF_HZ = 9000
 /** playbackRate·슬롯 게인 시정수(초)와 톤(lowpass·게인) 시정수(초) */
 const RATE_TAU = 0.02
 const TONE_TAU = 0.05
@@ -73,10 +83,27 @@ export function stopPlan(running: boolean, stopSoundS: number): { fade: boolean;
   return { fade: true, oneShot: true, suspendAfterS: Math.max(STOP_FADE_S + SLOT_FADE_S, stopSoundS) + SUSPEND_PAD_S }
 }
 
-/** 등파워 크로스페이드 — 두 게인의 제곱합이 1이라 합쳐도 소리가 꺼지거나 부풀지 않는다 */
-export function loopGains(t: number): { lower: number; upper: number } {
-  const k = (clamp01(t) * Math.PI) / 2
-  return { lower: Math.cos(k), upper: Math.sin(k) }
+/**
+ * 남은 교차 페이드 길이 (초). 페이드 도중에 또 칸이 바뀌면 나가던 소스는 이미 절반쯤 내려와
+ * 있으므로, 남은 만큼만 쓰고 끝낸다 (0에서 시작하는 커브는 길이 0이 되므로 최소값을 둔다).
+ */
+export function fadeSeconds(from: number): number {
+  return Math.max(SLOT_FADE_S, SWITCH_FADE_S * (1 - Math.acos(clamp01(from)) / (Math.PI / 2)))
+}
+
+/**
+ * 등파워 교차 페이드 곡선. 나가는 쪽의 지금 게인 from에서 이어 그리므로, 페이드 도중에
+ * 끼어들어도 두 게인의 제곱합은 늘 1이다 — 겹치는 동안 소리가 꺼지거나 부풀지 않는다.
+ * rising=true면 √(1−from²) → 1 (들어오는 쪽), false면 from → 0 (나가는 쪽).
+ */
+export function fadeCurve(from: number, rising: boolean, points: number = FADE_POINTS): Float32Array {
+  const a0 = Math.acos(clamp01(from))
+  const curve = new Float32Array(points)
+  for (let i = 0; i < points; i++) {
+    const a = a0 + ((Math.PI / 2 - a0) * i) / (points - 1)
+    curve[i] = rising ? Math.sin(a) : Math.cos(a)
+  }
+  return curve
 }
 
 interface Bank { loops: Loop[]; buffers: AudioBuffer[]; start: AudioBuffer | null; stop: AudioBuffer | null }
@@ -86,10 +113,12 @@ let ctx: AudioContext | null = null
 let master: GainNode | null = null
 /** 루프만 지나가는 버스 — start/stop 페이드가 여기에 걸린다 (원샷은 영향받지 않는다) */
 let loopBus: GainNode | null = null
+let loopLPF: BiquadFilterNode | null = null
 let toneLPF: BiquadFilterNode | null = null
 let toneGain: GainNode | null = null
-/** [0] = lower 루프, [1] = upper 루프. 둘이 같은 인덱스면 [1]은 비운다 */
-const slots: Array<Slot | null> = [null, null]
+/** 지금 울리는 칸 하나. outgoing은 교차 페이드로 물러나는 중인 옛 칸(없으면 null) */
+let active: Slot | null = null
+let outgoing: Slot | null = null
 
 let bank: Bank | null = null
 let bankPromise: Promise<void> | null = null
@@ -142,9 +171,15 @@ function audioContext(): AudioContext | null {
   toneLPF.type = 'lowpass'
   toneLPF.frequency.value = tone.lowpassHz
   toneLPF.connect(toneGain)
+  // 뱅크 최고 칸 위에서는 playbackRate가 1.9배까지 올라간다. 44.1 kHz 소스를 그만큼 끌어올리면
+  // 고역에 리샘플링 찌꺼기가 끼는데, 9 kHz 2극 저역통과로 살짝 덮는다 (톤 필터와 별개로 늘 걸린다).
+  loopLPF = ctx.createBiquadFilter()
+  loopLPF.type = 'lowpass'
+  loopLPF.frequency.value = LOOP_LPF_HZ
+  loopLPF.connect(toneLPF)
   loopBus = ctx.createGain()
   loopBus.gain.value = 0
-  loopBus.connect(toneLPF)
+  loopBus.connect(loopLPF)
 
   if (typeof document !== 'undefined') document.addEventListener('visibilitychange', handleVisibilityChange)
   return ctx
@@ -228,20 +263,20 @@ function retire(slot: Slot, now: number) {
   }
 }
 
-function releaseSlot(i: number, now: number) {
-  const slot = slots[i]
-  if (!slot) return
-  retire(slot, now)
-  slots[i] = null
+/** 울리고 있는 것을 모두 거둔다 (정지·뱅크 없음·시동 꺼짐) */
+function releaseLoops(now: number) {
+  if (outgoing) retire(outgoing, now)
+  if (active) retire(active, now)
+  outgoing = null
+  active = null
 }
 
-/** 슬롯 i에 index 루프를 임의 오프셋에서 새로 건다 */
-function startSlot(i: number, index: number, rate: number, now: number) {
+/** index 루프를 게인 0으로 새로 건다 (임의 지점에서 시작 — 앞뒤 칸과 위상이 겹치지 않게) */
+function startSlot(index: number, rate: number, now: number): Slot | null {
   const ac = ctx
-  if (!ac || !loopBus || !bank) return
+  if (!ac || !loopBus || !bank) return null
   const buffer = bank.buffers[index]
-  if (!buffer) return
-  releaseSlot(i, now)
+  if (!buffer) return null
   const gain = ac.createGain()
   gain.gain.value = 0
   gain.connect(loopBus)
@@ -250,9 +285,51 @@ function startSlot(i: number, index: number, rate: number, now: number) {
   src.loop = true
   src.playbackRate.value = rate
   src.connect(gain)
-  // 같은 루프를 두 슬롯이 물어도 위상이 겹치지 않도록 임의 지점에서 시작한다
   src.start(now, Math.random() * buffer.duration)
-  slots[i] = { index, src, gain }
+  return { index, src, gain }
+}
+
+/** 등파워 곡선으로 페이드. setValueCurveAtTime을 못 쓰는 환경이면 선형으로 갈음한다 */
+function fadeParam(param: AudioParam, from: number, rising: boolean, now: number, secs: number) {
+  param.cancelScheduledValues(now)
+  try {
+    param.setValueCurveAtTime(fadeCurve(from, rising), now, secs)
+  } catch {
+    param.setValueAtTime(rising ? Math.sqrt(1 - from * from) : from, now)
+    param.linearRampToValueAtTime(rising ? 1 : 0.0001, now + secs)
+  }
+}
+
+/**
+ * 칸 갈아타기. 새 소스를 걸고 0.25초 등파워 교차 페이드한 뒤 옛 소스를 끊는다.
+ * 페이드가 끝나기 전에 또 바뀌면 물러나던 소스는 즉시 거둔다 — 셋이 동시에 울리지 않게.
+ */
+function switchTo(index: number, rate: number, now: number) {
+  if (outgoing) retire(outgoing, now)
+  outgoing = null
+  const next = startSlot(index, rate, now)
+  if (!next) return                     // 버퍼가 아직 없다 — 울리던 칸을 그대로 둔다
+  const prev = active
+  active = next
+  if (!prev) {
+    next.gain.gain.setValueAtTime(1, now)   // 처음 켜는 것 — 페이드인은 loopBus가 맡는다
+    return
+  }
+  outgoing = prev
+  const from = clamp01(prev.gain.gain.value)
+  const secs = fadeSeconds(from)
+  fadeParam(next.gain.gain, from, true, now, secs)
+  fadeParam(prev.gain.gain, from, false, now, secs)
+  prev.src.onended = () => {
+    prev.src.disconnect()
+    prev.gain.disconnect()
+    if (outgoing === prev) outgoing = null
+  }
+  try {
+    prev.src.stop(now + secs + 0.02)
+  } catch {
+    /* 이미 멈춘 소스 */
+  }
 }
 
 /** 스로틀·부하가 정하는 톤을 지금 값으로 끌고 간다 */
@@ -270,32 +347,16 @@ function tick() {
   const loops = bank?.loops
   // 뱅크가 아직 없거나 시동이 꺼졌으면 루프를 모두 내린다. 디코드가 끝나면 다음 tick이 집어 든다
   if (!loops || loops.length === 0 || rpmLevel <= 0) {
-    releaseSlot(0, now)
-    releaseSlot(1, now)
+    releaseLoops(now)
     return
   }
-  const mix = bankMix(rpmLevel, loops)
-  const held: SlotHeld = [slots[0]?.index ?? null, slots[1]?.index ?? null]
-  const plan = planSlots(held, mix)
-  if (plan.swap) {
-    const a = slots[0]
-    slots[0] = slots[1]
-    slots[1] = a
-  }
-  const g = loopGains(mix.t)
-  const target = [g.lower, g.upper]
-  for (let i = 0; i < 2; i++) {
-    const action = plan.actions[i]
-    if (action.kind === 'release') {
-      releaseSlot(i, now)
-      continue
-    }
-    const rate = rpmLevel / loops[action.index].rpm
-    if (action.kind === 'start') startSlot(i, action.index, rate, now)
-    const slot = slots[i]
+  const want = pickLoop(rpmLevel, loops, active ? active.index : -1)
+  if (!active || active.index !== want) switchTo(want, rpmLevel / loops[want].rpm, now)
+  // 물러나는 칸도 같은 목표 rpm으로 끌고 간다 — 겹치는 250 ms 동안 둘이 정확히 같은 주파수라야
+  // 맥놀이가 생기지 않는다 (뱅크 rpm이 실측값이라 어긋남이 0.1% 아래다)
+  for (const slot of [active, outgoing]) {
     if (!slot) continue
-    slot.src.playbackRate.setTargetAtTime(rate, now, RATE_TAU)
-    slot.gain.gain.setTargetAtTime(target[i], now, RATE_TAU)
+    slot.src.playbackRate.setTargetAtTime(rpmLevel / loops[slot.index].rpm, now, RATE_TAU)
   }
 }
 
@@ -377,8 +438,7 @@ export function stop(): void {
   blipUntil = 0
   holdLoopBus(now)
   loopBus.gain.linearRampToValueAtTime(0.0001, now + STOP_FADE_S)
-  releaseSlot(0, now + STOP_FADE_S)
-  releaseSlot(1, now + STOP_FADE_S)
+  releaseLoops(now + STOP_FADE_S)
   if (plan.oneShot) playOneShot(bank?.stop)
   if (suspendTimer !== null) clearTimeout(suspendTimer)
   suspendTimer = setTimeout(() => {
