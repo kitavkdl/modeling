@@ -47,21 +47,34 @@ const STALL_HARD = 900
 const STALL_SOFT = 1050
 /** 약한 스톨 판정에 필요한 시간 (초) */
 const STALL_AFTER_S = 0.4
-/** 엔진 브레이크 기본 토크 (Nm) */
-const EB_BASE = 3
-/** 엔진 브레이크 회전 비례분 (Nm per 1000 rpm) */
-const EB_SLOPE = 2.5
+/**
+ * 엔진 브레이크 기본 토크 (Nm). 관성이 0.03 kg·m²로 작아서 3 + 2.5·rpm/1000이면
+ * 클러치를 잡은 0.3~0.5초짜리 변속 사이에 rpm이 아이들까지 곤두박질쳤다 — 그래서 낮췄다.
+ */
+const EB_BASE = 2
+/** 엔진 브레이크 회전 비례분 (Nm per 1000 rpm). 6000 rpm에서 11 Nm */
+const EB_SLOPE = 1.5
 /** 이 아래 스로틀이면 아이들 거버너가 붙는다 (0~1) */
 const GOV_THROTTLE = 0.05
 /**
  * 아이들 거버너 설정점 (rpm). 엔진 브레이크와 평형을 이루는 지점이 IDLE_RPM이 되도록 잡았다 —
- * 0.2·(S − r) = 3 + 2.5·r/1000 을 r = 1300에 대해 풀면 S = 1331.
+ * 0.2·(S − r) = 2 + 1.5·r/1000 을 r = 1300에 대해 풀면 S = 1320.
  */
-const IDLE_SETPOINT = 1331
+const IDLE_SETPOINT = 1320
 /** 아이들 거버너 이득 (Nm per rpm) */
 const GOV_GAIN = 0.2
-/** 아이들 거버너 최대 토크 (Nm) */
-const GOV_MAX = 15
+/**
+ * 아이들 거버너 최대 토크 (Nm) — 클러치가 끊겼거나 중립일 때.
+ * 중립 공회전을 붙잡아 두는 몫이라 넉넉히 준다.
+ */
+const GOV_MAX_FREE = 15
+/**
+ * 아이들 거버너 최대 토크 (Nm) — 기어가 물려 클러치가 붙어 있을 때.
+ * 15 Nm를 그대로 구동계로 흘리면 스로틀을 놓고 클러치를 놓아도 차가 아이들로 기어가서
+ * rpm이 1300 밑으로 내려가지 않았다(시동이 안 꺼짐). 실차의 아이들 거버너도
+ * 부하가 걸리면 이만큼 못 버틴다.
+ */
+const GOV_MAX_ENGAGED = 2
 /** 전개 토크 곡선 (rpm, Nm@크랭크). 사이는 선형보간 */
 const TORQUE_CURVE: [number, number][] = [
   [1000, 18],
@@ -160,11 +173,17 @@ export function torqueWot(rpm: number): number {
 /** 1차 시정수 응답 */
 const approach = (v: number, target: number, tau: number, dt: number) => v + (target - v) * (1 - Math.exp(-dt / tau))
 
-/** 순 엔진 토크 (Nm). 리미터·엔진 브레이크·아이들 거버너를 모두 포함한다 */
-function engineTorque(rpm: number, throttle: number): number {
+/**
+ * 순 엔진 토크 (Nm). 리미터·엔진 브레이크·아이들 거버너를 모두 포함한다.
+ * grip은 클러치 물림도 0~1 — 물려 있을수록 거버너 상한이 GOV_MAX_ENGAGED로 내려간다.
+ */
+function engineTorque(rpm: number, throttle: number, grip: number): number {
   const brake = EB_BASE + (EB_SLOPE * rpm) / 1000
   let t = (rpm > MAX_RPM ? 0 : torqueWot(rpm)) * throttle - brake * (1 - throttle)
-  if (throttle < GOV_THROTTLE) t += Math.min(Math.max(GOV_GAIN * (IDLE_SETPOINT - rpm), 0), GOV_MAX)
+  if (throttle < GOV_THROTTLE) {
+    const govMax = GOV_MAX_FREE * (1 - grip) + GOV_MAX_ENGAGED * grip
+    t += Math.min(Math.max(GOV_GAIN * (IDLE_SETPOINT - rpm), 0), govMax)
+  }
   return t
 }
 
@@ -202,10 +221,10 @@ export function stepRide(s: RideSim, input: RideInputs, dt: number): RideSim {
 
     if (!alive || grip <= 0) {
       // 자유 — 엔진과 차체가 따로 논다
-      if (alive) omega += (engineTorque(omega * RPM_PER_RAD_S, throttle) / J_E) * h
+      if (alive) omega += (engineTorque(omega * RPM_PER_RAD_S, throttle, grip) / J_E) * h
       speed = Math.max(0, speed - (res / MASS) * h)
     } else {
-      const torque = engineTorque(omega * RPM_PER_RAD_S, throttle)
+      const torque = engineTorque(omega * RPM_PER_RAD_S, throttle, grip)
       const sync = (speed / r) * ratio
       const slip = omega - sync
       // 직결을 버틸 만한 요구 토크인지 — 저항을 엔진 축으로 환산해서 본다

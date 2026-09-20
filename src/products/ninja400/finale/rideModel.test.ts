@@ -170,6 +170,53 @@ describe('구동계 물리 v2', () => {
     expect(Math.abs(after(-9.9) - level)).toBeLessThan(0.02)
   })
 
+  // --- 피드백 2회차: 물린 기어에서의 스톨과 변속 중 rpm 유지 --------------------
+
+  it('10. 1단 3 m/s·스로틀 0·클러치 놓음 — NaN 없이 굴러가거나 꺼진다', () => {
+    // 아이들 크롤(계속 굴러감)도 스톨도 다 받아들인다. 수치가 깨지지 않는 것만 본다.
+    const s = run(base({ gear: 1, speed: 3, rpm: syncRpm(1, 3) }), idle, 6)
+    expect(Number.isNaN(s.rpm)).toBe(false)
+    expect(Number.isNaN(s.speed)).toBe(false)
+    expect(Number.isNaN(s.distance)).toBe(false)
+    expect(s.speed).toBeGreaterThanOrEqual(0)
+  })
+
+  it('11. 6단 8 m/s(≈1,700 rpm) 러깅 — 클러치를 안 잡으면 시동이 꺼진다', () => {
+    // 거버너가 물린 기어에서도 15 Nm를 밀던 때는 영영 꺼지지 않고 아이들로 기어갔다.
+    // GOV_MAX_ENGAGED(2 Nm)로 내려서 구동계가 엔진을 끌어내릴 수 있게 됐다.
+    let s = base({ gear: 6, speed: 8, rpm: syncRpm(6, 8) })
+    expect(s.rpm).toBeGreaterThan(1600)
+    expect(s.rpm).toBeLessThan(1800)
+    let at = 0
+    for (let t = 0; t < 9; t += 1 / 120) {
+      s = stepRide(s, idle, 1 / 120)
+      if (s.stalled) {
+        at = t + 1 / 120
+        break
+      }
+    }
+    // 실측 7.6초 — 6단은 감속비가 낮아 엔진을 끌어내리는 데 시간이 걸린다
+    expect(at).toBeGreaterThan(0)
+    expect(at).toBeLessThan(9)
+    expect(s.stalled).toBe(true)
+    expect(s.rpm).toBe(0)
+  })
+
+  it('12. 2단 40 km/h에서 브레이크를 잡으면 클러치를 안 잡은 채로 3초 안에 꺼진다', () => {
+    const s = run(base({ gear: 2, speed: 40 / 3.6, rpm: syncRpm(2, 40 / 3.6) }), { ...idle, brakeKey: true }, 3)
+    expect(s.stalled).toBe(true)
+    expect(s.rpm).toBe(0)
+  })
+
+  it('13. 중립 6,000 rpm에서 스로틀을 놓아도 변속 길이(0.4초) 동안은 회전이 남는다', () => {
+    // 엔진 브레이크가 3 + 2.5·rpm/1000이던 때는 0.4초에 2,000 rpm 아래로 떨어져서
+    // 단수만 바꿔도 rpm이 아이들로 곤두박질쳤다. 2 + 1.5·rpm/1000으로 완화했다.
+    const short = run(base({ rpm: 6000 }), idle, 0.4)
+    expect(short.rpm).toBeGreaterThanOrEqual(4300)
+    const long = run(base({ rpm: 6000 }), idle, 2.5)
+    expect(Math.abs(long.rpm - IDLE_RPM)).toBeLessThan(100)
+  })
+
   it('제원 상수는 EX400G 값 그대로다', () => {
     expect(GEAR_RATIOS).toEqual([0, 2.929, 2.056, 1.619, 1.333, 1.154, 1.037])
     expect(PRIMARY).toBe(2.219)
