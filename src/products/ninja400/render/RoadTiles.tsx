@@ -16,7 +16,8 @@ const ROAD_U = (ROAD_M * 1000) * MM
 /** 텍스처 한 장이 4.8 m를 덮도록 = 12.5 */
 const REPEAT = ROAD_M / TEX_M
 /** 기존 Floor(y = -0.002)와 겹치지 않게 살짝 띄운다 (씬 단위) */
-const ROAD_Y = 0.002
+/** 타일 평면 높이 (scene units): 엔진 Floor(−0.002) 위, 접촉 그림자(0.001) 아래 — 그림자가 가려지지 않게 (R-5) */
+const ROAD_Y = 0.0005
 /** 안개 밀도: 스펙은 m 기준 0.045(≈22 m에서 63%). 씬 단위로 환산하면 ×0.01 */
 const FOG_DENSITY = 0.045 * M_PER_UNIT
 /** 장면 배경과 같은 색이라야 멀리가 배경에 녹는다 */
