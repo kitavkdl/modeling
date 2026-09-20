@@ -11,6 +11,7 @@ import re
 import sys
 import urllib.request
 from dataclasses import dataclass
+from fractions import Fraction
 
 import numpy as np
 import soundfile as sf
@@ -28,10 +29,31 @@ STEADY_TOL, STEADY_MIN_S = 0.04, 0.8    # 정속 창 허용 편차 / 최소 길�
 FLAT_TOL = 0.16         # 정밀 트랙 p5~p95 폭이 이보다 크면 "정속처럼 보였을 뿐"으로 본다
 PICK_TOL = 0.06         # 목표 rpm 대비 허용 편차
 FLATTEN_TOL, FLATTEN_MIN_S = 0.12, 0.6              # 평탄화 재료 허용 편차 / 최소 연속 길이 (s)
-FLATTEN_FRAME_S, FLATTEN_OVL_S, FLATTEN_GAP = 0.04, 0.008, 3    # 프레임 홉·이음 (s) / 메울 구멍 (프레임)
+FLATTEN_FRAME_S, FLATTEN_OVL_S, FLATTEN_GAP = 0.02, 0.006, 3    # 프레임 홉·이음 (s) / 메울 구멍 (프레임)
+FLATTEN_PASSES = 4      # 피치 평탄화 반복 상한 — 재서 남은 만큼 다시 편다
 EVEN_WIN_S, EVEN_MAX_DB = 0.15, 6.0     # 조각 안 음량 고르기 창 (s) / 최대 보정 (dB)
 LOOP_MIN_S, LOOP_MAX_S, LOOP_FLOOR_S = 1.2, 2.0, 0.5    # 루프 길이 범위 / 재료 부족 시 하한 (s)
 XFADE_S = 0.08                      # 루프 이음새 등파워 크로스페이드 (s)
+# 정밀 f0 — 루프를 정수 주기로 자르는 기준. 여기서 1% 틀리면 루프마다 위상이 튀어 맥놀이가 된다.
+F0_FMAX, F0_SPAN = 2000.0, 0.04     # 최소제곱에 쓰는 배음 상한 (Hz) / 힌트 대비 탐색 폭
+F0_NFFT_MIN = 1 << 17               # 제로패딩 rfft 최소 길이
+F0_HARM_TOL = 0.006                 # 이만큼 어긋난 피크는 배음이 아니라 이웃 잡음으로 보고 버린다
+F0_SETTLE = 2e-4                    # 재단→재측정이 이 안으로 들어오면 굳은 것으로 본다
+RES_SPAN = 0.06                             # 프레임별 f0 재탐색 폭 — 정속 창도 몇 %는 흔들린다
+RES_FRAME_S, RES_HOP_S = 0.25, 0.05         # 잔류 피치 보고용 창·홉 (s)
+RES_FIX_FRAME_S, RES_FIX_HOP_S = 0.12, 0.02 # 평탄화 재측정용 창·홉 (s) — 빠른 흔들림까지 잡는다
+RES_MIN_CYCLES = 20                 # 창은 적어도 이만큼의 점화 주기를 담는다. 8주기로 재면 22 Hz
+                                    # 아이들에서 추정기 자체의 잡음이 1%다 (한 주기를 그대로 반복해
+                                    # 만든 '완벽히 주기적인' 대조 신호로 확인). 20주기면 0.02% 아래.
+RES_TARGET, RES_DROP = 0.005, 0.01  # 잔류 피치 목표 / 이보다 크면 루프를 버린다
+RATIO_DENOMS, RATIO_TOL = (64, 256, 1024), 2e-5     # 리샘플 비율 유리수 근사 분모 후보 / 허용 오차
+ENV_RMS_S, ENV_SMOOTH_S = 0.05, 0.12        # 포락선 RMS 창 / 평활 창 (s) — 3 Hz 이하 출렁임만 남는다
+ENV_MAX_DB, ENV_TARGET_DB = 2.0, 1.0        # 포락선 역보정 상한 (dB) / 남은 변동 목표 (dB)
+CUT_STEP_S, CUT_ENV_DEC_S = 0.008, 0.01     # 재단 위치 탐색 간격 / 포락선 간축 간격 (s)
+CUT_LEN_PENALTY_DB = 0.5    # 짧은 루프에 매기는 벌점 (dB, LOOP_MAX_S 대비 선형) — 비슷하면 긴 쪽
+CUT_SHORT_PENALTY_DB = 2.0  # LOOP_MIN_S에 못 미치는 루프에 더 매기는 벌점 (dB)
+CUT_SHORTLIST = 80          # 성긴 점수로 추린 뒤 실제로 조립해 다시 줄 세우는 후보 수
+CUT_MATERIAL_S = 4.0        # 정속 창에서 가져올 재료 길이 상한 (s) — 길수록 고를 자리가 많다
 HP_HZ, HP_ORDER = 30.0, 4           # 하이패스 (Hz, 차수)
 TARGET_RMS_DBFS, PEAK_CEIL_DBFS = -18.0, -1.0       # RMS 정규화 목표 / 피크 상한 (dBFS)
 VORBIS_LEVEL = 0.55     # libsndfile compression_level; vorbis quality ≈ 1 − level ≈ 0.45
@@ -134,6 +156,131 @@ def _harmonic_score(p: np.ndarray, df: float, f0s: np.ndarray, nharm: int) -> np
     return score
 
 
+def _power_spectrum(x: np.ndarray, sr: int, nfft: int | None = None) -> tuple[np.ndarray, float]:
+    """조각 전체에 한 창을 씌우고 길게 제로패딩한 파워 스펙트럼 (P, 빈 간격 df)."""
+    n = len(x)
+    if nfft is None:
+        nfft = 1 << max(F0_NFFT_MIN.bit_length() - 1, int(math.ceil(math.log2(max(2 * n, 2)))))
+    return np.abs(np.fft.rfft(x * np.hanning(n), n=nfft)) ** 2, sr / nfft
+
+
+def _peak_offset(a: float, b: float, c: float) -> float:
+    """3점 포물선 꼭짓점의 격자 단위 오프셋 — 위로 볼록할 때만 움직인다."""
+    den = a - 2 * b + c
+    return float(np.clip(0.5 * (a - c) / den, -0.5, 0.5)) if den < -1e-30 else 0.0
+
+
+def _coarse_f0(P: np.ndarray, df: float, hint: float, span: float = F0_SPAN) -> float:
+    """Σ_k P(k·f0)/k 가 최대인 f0 — 격자를 세 번 좁혀 가며 포물선 보간한다."""
+    def score(f0s: np.ndarray) -> np.ndarray:
+        s = np.zeros(len(f0s))
+        for k in range(1, max(1, int(F0_FMAX / max(float(f0s[0]), 1e-6))) + 1):
+            pos = np.clip(k * f0s / df, 0, len(P) - 1.001)
+            i0 = pos.astype(int)
+            u = pos - i0
+            s += ((1.0 - u) * P[i0] + u * P[i0 + 1]) / k
+        return s
+
+    grid = np.linspace(hint * (1 - span), hint * (1 + span), 2001)
+    best = float(hint)
+    for _ in range(3):
+        sc = score(grid)
+        i = int(np.clip(np.argmax(sc), 1, len(grid) - 2))
+        step = float(grid[1] - grid[0])
+        best = float(grid[i]) + _peak_offset(sc[i - 1], sc[i], sc[i + 1]) * step
+        grid = np.linspace(best - step, best + step, 201)
+    return best
+
+
+def _refine_f0(P: np.ndarray, df: float, f0: float) -> float:
+    """배음마다 피크 주파수를 포물선 보간으로 재고 f_k = k·f0 를 세기 가중 최소제곱으로 푼다.
+    가중합만으로는 1차 배음이 지배해 봉우리가 뭉툭하다 — 고차 배음은 지레가 길어 오차를 0.1% 아래로 끌어내린다."""
+    logP = np.log(P + 1e-300)
+    num = den = 0.0
+    for k in range(1, max(2, int(F0_FMAX / max(f0, 1e-6))) + 1):
+        c, half = k * f0 / df, 0.4 * f0 / df
+        lo, hi = int(max(1, c - half)), int(min(len(P) - 2, c + half))
+        if hi <= lo:
+            break
+        i = int(np.clip(lo + int(np.argmax(P[lo:hi + 1])), 1, len(P) - 2))
+        fk = (i + _peak_offset(logP[i - 1], logP[i], logP[i + 1])) * df
+        if abs(fk / k - f0) > F0_HARM_TOL * f0:     # 배음이 아니라 사이 잡음을 잡았다
+            continue
+        w = float(P[i]) / k
+        num += w * k * fk
+        den += w * k * k
+    return f0 if den <= 0 else num / den
+
+
+def precise_f0(x: np.ndarray, hint_hz: float, sr: int = SR_OUT, span: float = F0_SPAN) -> float:
+    """조각 전체의 기본 주파수 (Hz). 합성 신호 실험에서 오차 0.1% 아래."""
+    P, df = _power_spectrum(x, sr)
+    return _refine_f0(P, df, _coarse_f0(P, df, hint_hz, span))
+
+
+def pitch_frames(y: np.ndarray, f0: float, sr: int = SR_OUT, frame_s: float = RES_FRAME_S,
+                 hop_s: float = RES_HOP_S) -> tuple[np.ndarray, np.ndarray]:
+    """프레임별 f0 (프레임 한가운데 시각 s, Hz). 창은 적어도 8 점화 주기를 담는다."""
+    frame = max(int(frame_s * sr), int(round(RES_MIN_CYCLES * sr / max(f0, 1e-6))))
+    hop = max(1, int(hop_s * sr))
+    ts, fs = [], []
+    for q in range(0, max(1, len(y) - frame), hop):
+        if q + frame > len(y):
+            break
+        P, df = _power_spectrum(y[q:q + frame], sr)
+        ts.append((q + frame / 2) / sr)
+        fs.append(_refine_f0(P, df, _coarse_f0(P, df, f0, RES_SPAN)))
+    if not fs:
+        return np.array([0.0]), np.array([f0])
+    return np.array(ts), np.array(fs)
+
+
+def pitch_residual(y: np.ndarray, f0: float, sr: int = SR_OUT, **kw) -> float:
+    """남은 피치 흔들림 — 프레임별 f0의 p5~p95 폭 / 중앙값."""
+    _, f = pitch_frames(y, f0, sr, **kw)
+    lo, mid, hi = np.percentile(f, [5, 50, 95])
+    return float((hi - lo) / max(mid, 1e-9))
+
+
+def loop_residual(y: np.ndarray, f0: float, sr: int = SR_OUT) -> float:
+    """루프의 잔류 피치. 앞 80 ms는 꼬리를 겹쳐 놓은 이음새라 f0 추정이 무의미하므로 건너뛴다 —
+    이음새를 넘는 위상 연속성은 정수 주기 재단이 보장하고, 여기서는 루프 안쪽만 본다."""
+    return pitch_residual(y[int(XFADE_S * sr):], f0, sr)
+
+
+def env_db(y: np.ndarray, sr: int = SR_OUT, circular: bool = True) -> np.ndarray:
+    """단시간 RMS(50 ms) → 120 ms 평활 → dB. 3 Hz 이하 출렁임만 남고 점화 펄스(≥20 Hz)는 지워진다."""
+    mode = "wrap" if circular else "nearest"
+    p = uniform_filter1d(y ** 2, size=max(1, int(ENV_RMS_S * sr)), mode=mode)
+    p = uniform_filter1d(p, size=max(1, int(ENV_SMOOTH_S * sr)), mode=mode)
+    return 10 * np.log10(p + 1e-18)
+
+
+def env_depth_db(e: np.ndarray) -> float:
+    """포락선 변동 폭 (dB, p5~p95)."""
+    lo, hi = np.percentile(e, [5, 95])
+    return float(hi - lo)
+
+
+def flatten_envelope(y: np.ndarray, sr: int = SR_OUT) -> np.ndarray:
+    """루프 안 느린 음량 출렁임을 ±2 dB 안에서 되돌린다 — 순환 필터라 이음새가 그대로 살아 있다."""
+    e = env_db(y, sr)
+    return y * 10 ** (np.clip(float(np.median(e)) - e, -ENV_MAX_DB, ENV_MAX_DB) / 20)
+
+
+def _ratio(local: float, target: float) -> tuple[int, int]:
+    """local → target 피치 이동에 쓸 작은 정수비. 분모를 키워 가며 오차 2e-5 안에 드는 첫 근사를 쓴다
+    (rpm 정수비를 그대로 쓰면 5491/5520 같은 값이 나와 resample_poly가 수십 배 느려진다)."""
+    r = max(local, 1e-9) / max(target, 1e-9)
+    frac = Fraction(r).limit_denominator(RATIO_DENOMS[-1])
+    for n in RATIO_DENOMS:
+        f = Fraction(r).limit_denominator(n)
+        if abs(float(f) - r) <= RATIO_TOL * r:
+            frac = f
+            break
+    return max(1, frac.numerator), max(1, frac.denominator)
+
+
 def track_rpm(x: np.ndarray, sr: int = SR_OUT) -> Track:
     """8 kHz STFT(1.024 s)에서 6배음 가중합이 최대인 f0를 찾아 rpm(=f0·60) 트랙을 만든다."""
     df, t, p = _spectrogram(x, sr, NPERSEG, HOP)
@@ -167,12 +314,6 @@ def _spread(track: Track, t0: float, dur: float) -> float:
     return float((hi - lo) / max(mid, 1e-9))
 
 
-def _loop_spread(y: np.ndarray, rpm: float, sr: int = SR_OUT) -> float:
-    """만들어진 루프 안에서 남은 피치 흔들림."""
-    hint = Track(np.array([0.0, len(y) / sr]), np.array([rpm, rpm]), np.array([True, True]))
-    return _spread(refine_track(y, hint, sr), 0.0, len(y) / sr)
-
-
 def steady_windows(track: Track, tol: float = STEADY_TOL, min_s: float = STEADY_MIN_S) -> list[tuple[float, float, float]]:
     """유효 프레임 중 rpm이 평균 ±tol 안에 머무는 최대 구간들을 (시작 s, 길이 s, rpm)으로 모은다."""
     dt = float(track.t[1] - track.t[0])
@@ -194,13 +335,21 @@ def steady_windows(track: Track, tol: float = STEADY_TOL, min_s: float = STEADY_
     return out
 
 
-def pick_window(windows, target: float, tol: float = PICK_TOL,
-                need_s: float = LOOP_MIN_S + XFADE_S, want_s: float = LOOP_MAX_S + XFADE_S):
-    """목표 rpm에서 tol 안에 들고 루프 한 개분(need_s) 이상인 정속 창 중 편차 최소(동률이면 긴) 것."""
+def pick_windows(windows, target: float, tol: float = PICK_TOL, need_s: float = LOOP_MIN_S + XFADE_S,
+                 want_s: float = CUT_MATERIAL_S, limit: int = 3, apart_s: float = 1.0) -> list:
+    """목표 rpm에서 tol 안에 들고 루프 한 개분(need_s) 이상인 정속 창을 좋은 순으로 몇 개.
+    편차는 1% 단위로만 따진다 — 실제 rpm은 뱅크에 실측값으로 실리므로, 목표에 0.1% 더 가까운 것보다
+    길어서 잘라낼 자리가 많은 창이 낫다. 시작 시각이 apart_s 이상 떨어진 것만 골라, 한 프레임씩 민
+    같은 자리를 세 번 시도하는 대신 서로 다른 구간을 후보로 삼는다."""
     cands = [w for w in windows if abs(w[2] - target) <= tol * target and w[1] >= need_s - 1e-9]
-    if not cands:
-        return None
-    return min(cands, key=lambda w: (round(abs(w[2] - target) / target, 3), -min(w[1], want_s)))
+    cands.sort(key=lambda w: (round(abs(w[2] - target) / target, 2), -min(w[1], want_s)))
+    out: list = []
+    for w in cands:
+        if all(abs(w[0] - o[0]) >= apart_s for o in out):
+            out.append(w)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def _xfade_append(acc: np.ndarray | None, seg: np.ndarray, n: int) -> np.ndarray:
@@ -234,16 +383,37 @@ def _close_gaps(mask: np.ndarray, maxgap: int) -> np.ndarray:
 
 
 def _flatten_piece(seg: np.ndarray, sr: int, times: np.ndarray, rpms: np.ndarray, target: float):
-    """40 ms 프레임마다 resample_poly로 피치를 target에 맞춰 이어 붙인다 (times는 seg 시작 기준 s)."""
+    """20 ms 프레임마다 (프레임 한가운데 rpm으로) 리샘플해 피치를 target에 맞춰 이어 붙인다.
+    프레임은 입력 시각 기준으로 이어 붙으므로 이음새에서 위상이 맞는다 (times는 seg 시작 기준 s)."""
     frame, ovl = int(FLATTEN_FRAME_S * sr), int(FLATTEN_OVL_S * sr)
     out = None
     for q in range(0, len(seg) - frame - ovl, frame):
-        local = float(np.interp(q / sr, times, rpms))
-        up, down = max(1, int(round(local))), int(round(target))
-        g = math.gcd(up, down)
-        r = resample_poly(seg[q:q + frame + ovl], up // g, down // g)
-        out = _xfade_append(out, r, int(ovl * local / target))
+        local = float(np.interp((q + frame / 2) / sr, times, rpms))
+        up, down = _ratio(local, target)
+        r = resample_poly(seg[q:q + frame + ovl], up, down)
+        out = _xfade_append(out, r, int(ovl * up / down))
     return out
+
+
+def _flatten_settle(piece: np.ndarray, sr: int, target: float) -> tuple[np.ndarray, float]:
+    """평탄화된 조각에 남은 흔들림을 정밀 트래커로 다시 재서 그만큼 더 편다.
+    목표(±0.5%)에 들거나 더 나아지지 않으면 멈추고, 남은 편차를 함께 돌려준다."""
+    kw = dict(frame_s=RES_FIX_FRAME_S, hop_s=RES_FIX_HOP_S)
+    res = pitch_residual(piece, target / 60.0, sr, **kw)
+    for _ in range(FLATTEN_PASSES - 1):
+        if res <= RES_TARGET:
+            break
+        t, f = pitch_frames(piece, target / 60.0, sr, **kw)
+        # 조각을 이어 붙인 자리에서는 f0 추정이 흐려진다 — 튄 프레임 하나를 그대로 되먹이면
+        # 멀쩡한 구간까지 비틀어 놓으므로 중앙값 필터로 걸러 낸다
+        again = _flatten_piece(piece, sr, t, _median_filter(f, 5) * 60.0, target)
+        if again is None or len(again) < int(FLATTEN_FRAME_S * sr) * 4:
+            break
+        nxt = pitch_residual(again, target / 60.0, sr, **kw)
+        if nxt >= res:
+            break
+        piece, res = again, nxt
+    return piece, res
 
 
 def flatten_from_sweep(x: np.ndarray, sr: int, track: Track, target: float, need_s: float):
@@ -270,20 +440,16 @@ def flatten_from_sweep(x: np.ndarray, sr: int, track: Track, target: float, need
         piece = _flatten_piece(x[a:b], sr, track.t[i:j + 1] - track.t[i], track.rpm[i:j + 1], target)
         if piece is None or len(piece) < int(FLATTEN_FRAME_S * sr) * 4:
             continue
-        spread = _loop_spread(piece, target, sr)
-        if spread > 2 * STEADY_TOL:         # 남은 흔들림이 크면 평탄화된 결과를 다시 재서 한 번 더 편다
-            hint = Track(np.array([0.0, len(piece) / sr]), np.array([target, target]), np.array([True, True]))
-            ft = refine_track(piece, hint, sr)
-            again = _flatten_piece(piece, sr, ft.t, ft.rpm, target)
-            if again is not None and _loop_spread(again, target, sr) < spread:
-                piece = again
+        piece, _ = _flatten_settle(piece, sr, target)
         piece = _even_level(piece, sr)
         rms = max(float(np.sqrt(np.mean(piece ** 2))), 1e-12)
         ref = ref or rms                    # 서로 다른 시점의 조각을 같은 레벨로 맞춘다(루프 안 음량 출렁임 방지)
         piece = piece * (ref / rms)
         used.append((track.t[i], (j - i + 1) * dt))
         acc = _xfade_append(acc, piece, int(FLATTEN_OVL_S * sr))
-        if len(acc) >= need_s * sr:
+        # 긴 구간부터 쓴다. 한 구간만으로 최소 길이가 나오면 거기서 멈춘다 — 서로 다른 시각의
+        # 조각을 이어 붙이면 이은 자리에서 음색이 튀고, 그 자리가 루프마다 되풀이돼 귀에 걸린다.
+        if len(acc) >= min(need_s, LOOP_FLOOR_S + XFADE_S) * sr:
             break
     return acc, used
 
@@ -327,23 +493,85 @@ def _seam_db(y: np.ndarray, edge: int) -> float:
     return 20 * math.log10(max(tail, 1e-12) / max(head, 1e-12))
 
 
-def make_loop(seg: np.ndarray, rpm: float, sr: int = SR_OUT) -> tuple[np.ndarray, dict]:
-    """점화 주기 정수배로 자르고 끝 80 ms를 앞에 등파워로 섞어 이음새 없는 루프를 만든다."""
-    period = 60.0 / rpm                     # 360° 병렬 2기통 점화 주기 (s)
-    xf = int(XFADE_S * sr)
+def _swell_db(e: np.ndarray) -> float:
+    """포락선 e(dB)를 ±2 dB 역보정으로 폈을 때 남는 변동 폭 (dB) — 재단 후보를 값싸게 줄 세운다."""
+    return env_depth_db(e + np.clip(float(np.median(e)) - e, -ENV_MAX_DB, ENV_MAX_DB))
+
+
+def _len_penalty(length_s: float) -> float:
+    """짧은 루프 벌점 (dB). 짧을수록 되풀이가 자주 들리니 출렁임이 비슷하면 긴 쪽을 쓴다."""
+    return (CUT_LEN_PENALTY_DB * max(0.0, LOOP_MAX_S - length_s) / LOOP_MAX_S
+            + CUT_SHORT_PENALTY_DB * max(0.0, LOOP_MIN_S - length_s) / LOOP_MIN_S)
+
+
+def _best_cut(seg: np.ndarray, f0: float, sr: int) -> tuple[int, int]:
+    """(주기 수, 잘라낼 위치) 후보를 훑어 '평탄화 뒤 남는 출렁임 + 이음새 단차'가 가장 작은 재단을 고른다.
+    무조건 가장 긴 자리를 쓰면 재료의 느린 출렁임을 그대로 안고 가, 루프가 한 바퀴 돌 때마다
+    부풀었다 꺼지는 0.5 Hz 맥동이 된다 — 사용자가 말한 '왕(쉬고)왕'이 바로 이것이다."""
+    xf, per = int(XFADE_S * sr), sr / f0
+    dec = max(1, int(CUT_ENV_DEC_S * sr))
+    # 성긴 점수도 하이패스 뒤에서 잰다 — 30 Hz HP가 22 Hz 아이들의 기본파를 깎으면 음량 분포가 달라진다
+    e = env_db(_highpass(seg, sr), sr, circular=False)[::dec]   # 10 ms 간격 (출렁임은 3 Hz 이하다)
     avail_s = (len(seg) - xf) / sr
-    cycles = int(min(LOOP_MAX_S, avail_s) / period)
-    length = int(round(cycles * period * sr))
-    if cycles < 1 or length / sr < LOOP_FLOOR_S:
-        raise ValueError(f"재료 {avail_s:.2f} s로는 {rpm:.0f} rpm 루프를 만들 수 없다")
-    edge = min(max(int(0.02 * sr), int(period * sr)), length // 4)   # 이음새 비교 구간 (점화 1주기, ≥20 ms)
-    slack = max(0, len(seg) - (length + xf))
-    step = max(1, int(0.001 * sr))          # 1 ms 간격으로 잘라낼 위치를 훑어 이음새가 가장 고른 곳을 고른다
-    offs = list(range(0, slack + 1, step)) or [0]
-    off = min(offs, key=lambda o: abs(_seam_db(_assemble(seg, o, length, xf), edge)))
-    raw = _assemble(seg, off, length, xf)   # 하이패스 전 신호 — 실측 rpm은 여기서 잰다(22 Hz 아이들 기본파 보존)
-    y, limited, peak_db = _normalize(_highpass(raw, sr, circular=True))
+    if avail_s < LOOP_FLOOR_S:
+        raise ValueError(f"재료 {avail_s:.2f} s로는 {f0 * 60:.0f} rpm 루프를 만들 수 없다")
+    floor_s = LOOP_MIN_S if avail_s >= LOOP_MIN_S else LOOP_FLOOR_S     # 재료가 넉넉하면 짧은 루프는 보지 않는다
+    cyc_max, cyc_min = int(min(LOOP_MAX_S, avail_s) * f0), max(1, int(np.ceil(floor_s * f0)))
+    best, cands = None, []
+    for cyc in range(cyc_max, cyc_min - 1, -1):
+        length = int(round(cyc * per))
+        if length < LOOP_FLOOR_S * sr or length + xf > len(seg):
+            continue
+        edge = min(max(int(0.02 * sr), int(per)), length // 4, xf)
+        # 이음새는 _assemble과 똑같이 섞어 본 앞 edge와 루프 끝 edge의 RMS 차로 잰다.
+        # 정수 주기로 잘랐으니 두 조각은 위상이 맞고, 그래서 겹치면 최대 +3 dB까지 부푼다 —
+        # 이 봉우리가 루프마다 되풀이되면 그대로 0.5 Hz 맥동이 된다.
+        w = np.arange(edge) / xf * (np.pi / 2)
+        sin_w, cos_w = np.sin(w), np.cos(w)
+        pen = _len_penalty(length / sr)
+        for off in range(0, len(seg) - length - xf + 1, max(1, int(CUT_STEP_S * sr))):
+            head = seg[off:off + edge] * sin_w + seg[off + length:off + length + edge] * cos_w
+            hp = float(np.mean(head ** 2))
+            tp = float(np.mean(seg[off + length - edge:off + length] ** 2))
+            seam = abs(10 * math.log10(max(tp, 1e-30) / max(hp, 1e-30)))
+            cost = _swell_db(e[off // dec:(off + length) // dec]) + seam + pen
+            cands.append((cost, cyc, off, length, edge))
+    if not cands:
+        raise ValueError(f"재료 {avail_s:.2f} s로는 {f0 * 60:.0f} rpm 루프를 만들 수 없다")
+    # 성긴 점수는 크로스페이드도 순환도 무시한다 — 추려 낸 뒤에는 실제로 조립해 정확히 다시 잰다
+    cands.sort(key=lambda c: c[0])
+    for _, cyc, off, length, edge in cands[:CUT_SHORTLIST]:
+        y = flatten_envelope(_highpass(_assemble(seg, off, length, xf), sr, circular=True), sr)
+        cost = env_depth_db(env_db(y, sr)) + abs(_seam_db(y, edge)) + _len_penalty(length / sr)
+        if best is None or cost < best[0]:
+            best = (cost, cyc, off)
+    return best[1], best[2]
+
+
+def make_loop(seg: np.ndarray, rpm_hint: float, sr: int = SR_OUT) -> tuple[np.ndarray, dict]:
+    """정밀하게 잰 점화 주기의 정수배로 자르고 끝 80 ms를 앞에 등파워로 섞어 루프를 만든다.
+    주기가 0.1%만 어긋나도 루프가 한 바퀴 돌 때마다 위상이 튀어 0.5~2 Hz로 '왕(쉬고)왕' 한다 —
+    그래서 힌트로 한 번 자른 뒤 그 조립본에서 f0를 다시 재고, 그 f0로 다시 자른다."""
+    xf = int(XFADE_S * sr)
+    f0 = precise_f0(seg, rpm_hint / 60.0, sr)       # 360° 병렬 2기통 점화 주기 = 1/f0 (s)
+    cycles, off = _best_cut(seg, f0, sr)
+    length = int(round(cycles / f0 * sr))
+    for i in range(4):                      # 재단 → 재측정이 굳을 때까지 (보통 한 번이면 끝난다)
+        length = int(round(cycles / f0 * sr))
+        off = min(off, max(0, len(seg) - length - xf))
+        raw = _assemble(seg, off, length, xf)
+        nxt = precise_f0(raw, f0, sr)
+        if i == 3 or abs(nxt - f0) <= F0_SETTLE * f0:
+            break                           # 마지막 바퀴에서는 f0를 갱신하지 않는다 — 길이와 반드시 맞춰야 한다
+        f0 = nxt
+    edge = min(max(int(0.02 * sr), int(sr / f0)), length // 4, xf)   # 이음새 비교 구간 (점화 1주기, ≥20 ms)
+    # 포락선은 하이패스 뒤에 편다 — 30 Hz HP는 22 Hz 아이들의 기본파를 깎아 내며 음량 분포를
+    # 바꿔 놓으므로, 실제로 내보낼 신호에서 재고 펴야 한다. 순환 필터라 이음새는 그대로다.
+    hp = _highpass(raw, sr, circular=True)
+    before = env_db(hp, sr)
+    y, limited, peak_db = _normalize(flatten_envelope(hp, sr))
     return y, {
+        "f0": f0,
         "len_s": length / sr,
         "cycles": cycles,
         "off_s": off / sr,
@@ -351,7 +579,9 @@ def make_loop(seg: np.ndarray, rpm: float, sr: int = SR_OUT) -> tuple[np.ndarray
         "limited": limited,
         "peak_db": peak_db,
         "short": length / sr < LOOP_MIN_S,
-        "raw": raw,
+        "env_before": before,
+        "env_after": env_db(y, sr),
+        "raw": raw,     # 하이패스 전 신호 — f0·잔류 피치는 여기서 잰다 (22 Hz 아이들 기본파 보존)
     }
 
 
@@ -431,6 +661,59 @@ def _plot(path: str, items: list[tuple[str, np.ndarray, float]], sr: int = SR_OU
     print(f"  스펙트로그램: {path}")
 
 
+def build_loop(x: np.ndarray, fine: Track, sid: int, target: int, win, need: float):
+    """정속 창(win) 하나 또는 스윕 평탄화로 재료를 모아 루프 하나를 만든다. 재료가 없으면 None.
+    돌려주는 info에는 판정에 쓰는 실측값(정밀 rpm·잔류 피치·포락선 깊이)이 들어 있다."""
+    if win is not None:
+        a, span = int(win[0] * SR_OUT), min(win[1], CUT_MATERIAL_S)
+        seg, rpm_hint = x[a:a + int(span * SR_OUT)], win[2]
+        where, method = f"{sid} @{win[0]:.1f}s/{span:.2f}s", "steady"
+    else:
+        seg, used = flatten_from_sweep(x, SR_OUT, fine, float(target), need)
+        if seg is None:
+            return None
+        rpm_hint, method = float(target), "flattened"
+        where = f"{sid} @" + "+".join(f"{u[0]:.1f}s/{u[1]:.2f}s" for u in used)
+    # 어느 길로 왔든 재료를 다 모은 뒤 한 번 더 재서 편다. 거친 트래커에 정속으로 보였던 창도
+    # 실제로는 2~4% 흔들리고, 스윕 쪽은 조각을 이어 붙인 자리에서 조각 사이 차이가 남는다.
+    seg, _ = _flatten_settle(seg, SR_OUT, rpm_hint)
+    try:
+        y, info = make_loop(seg, rpm_hint)
+    except ValueError as exc:
+        info = {"error": str(exc)}
+        return None, info, where, method
+    info["res"] = loop_residual(info["raw"], info["f0"])
+    info["env"] = (env_depth_db(info["env_before"]), env_depth_db(info["env_after"]))
+    info["old_rpm"] = measure_rpm(info["raw"])      # 예전 추정(거친 트래커 + 10 rpm 반올림) — 비교용
+    info["rpm"] = info["f0"] * 60.0
+    return y, info, where, method
+
+
+def _plot_env(path: str, items: list[tuple[str, np.ndarray, np.ndarray]], sr: int = SR_OUT) -> None:
+    """루프별 단시간 RMS 포락선(dB, 각자의 중앙값 기준)을 평탄화 전후로 겹쳐 그린다 — 평평할수록 좋다."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    cols = 3
+    rows = int(np.ceil(len(items) / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(4.6 * cols, 2.2 * rows), squeeze=False)
+    for ax, (name, before, after) in zip(axes.ravel(), items):
+        for e, label, color in ((before, "before", "tab:red"), (after, "after", "tab:blue")):   # 폰트에 한글이 없다
+            ax.plot(np.arange(len(e)) / sr, e - float(np.median(e)), color=color, lw=0.8,
+                    label=f"{label} ({env_depth_db(e):.2f} dB)")
+        ax.axhline(0, color="0.7", lw=0.5)
+        ax.set_ylim(-4, 4)
+        ax.set_title(name, fontsize=9)
+        ax.set_ylabel("dB", fontsize=7)
+        ax.tick_params(labelsize=6)
+        ax.legend(fontsize=6, loc="upper right")
+    for ax in axes.ravel()[len(items):]:
+        ax.axis("off")
+    fig.tight_layout()
+    fig.savefig(path, dpi=110)
+    print(f"  포락선: {path}")
+
+
 def main(argv=None) -> int:
     """입력 mp3에서 목표 rpm별 루프·원샷·bank.json을 만들고 검수표를 출력한다."""
     ap = argparse.ArgumentParser(description="엔진음 뱅크 생성 (스펙 §4.2)")
@@ -453,42 +736,50 @@ def main(argv=None) -> int:
         print(f"{sid}: {len(x) / SR_OUT:.1f} s, 유효 프레임 {tr.valid.mean() * 100:.0f}%, 아이들 추정 "
               + (f"{idle[2]:.0f} rpm (@{idle[0]:.1f}s, {idle[1]:.1f}s)" if idle else "없음"))
 
-    rows, loops, plots = [], [], []
+    rows, loops, plots, envs = [], [], [], []
     for target in targets:
         sid = SOURCE_OF.get(target, DEFAULT_SOURCE)
         x, tr, fine = src[sid]
         need = LOOP_MAX_S + XFADE_S
-        win = pick_window(steady_windows(tr), target)
-        if win is not None and _spread(fine, win[0], min(win[1], need)) > FLAT_TOL:
-            win = None                      # 긴 창(1.024 s) 탓에 정속으로 보였을 뿐 — 평탄화로 넘긴다
-        method, where = "steady", ""
-        if win is not None:
-            a = int(win[0] * SR_OUT)
-            seg = x[a:a + int(min(win[1], need + 0.5) * SR_OUT)]
-            rpm_hint, where = win[2], f"{sid} @{win[0]:.1f}s/{min(win[1], need + 0.5):.2f}s"
-        else:
-            seg, used = flatten_from_sweep(x, SR_OUT, fine, target, need)
-            method, rpm_hint = "flattened", float(target)
-            if seg is None:
-                print(f"! {target} rpm 제외: ±{FLATTEN_TOL:.0%} 안에 {FLATTEN_MIN_S} s 이상 재료가 없다")
+        # 정속 창 후보를 좋은 순으로, 마지막에 스윕 평탄화를 붙인다 — 흔들려 떨어지면 다음 재료로 넘어간다
+        wins = [w for w in pick_windows(steady_windows(tr), target)
+                if _spread(fine, w[0], min(w[1], need)) <= FLAT_TOL]   # 긴 창(1.024 s) 탓에 정속으로 보였을 뿐
+        best = None
+        for win in [*wins, None]:
+            got = build_loop(x, fine, sid, target, win, need)
+            if got is None:
+                print(f"! {target} rpm 재료 없음: ±{FLATTEN_TOL:.0%} 안에 {FLATTEN_MIN_S} s 이상 구간이 없다")
                 continue
-            where = f"{sid} @" + "+".join(f"{u[0]:.1f}s/{u[1]:.2f}s" for u in used)
-        try:
-            y, info = make_loop(seg, rpm_hint)
-        except ValueError as exc:
-            print(f"! {target} rpm 제외: {exc}")
+            y, info, where, method = got
+            if y is None:
+                print(f"! {target} rpm 후보 버림: {info['error']}")
+                continue
+            print(f"  {target}: rpm {round(info['old_rpm'] / 10.0) * 10:.0f}(옛) → {info['rpm']:.1f}"
+                  f"(정밀, f0 {info['f0']:.4f} Hz), {info['cycles']}주기 {info['len_s']:.4f}s, "
+                  f"잔류 피치 {info['res'] * 100:.2f}%, 포락선 {info['env'][0]:.2f}→{info['env'][1]:.2f} dB, "
+                  f"{method} {where}")
+            if abs(info["rpm"] - target) > PICK_TOL * target:
+                print(f"    → 실측 {info['rpm']:.0f} rpm이 ±{PICK_TOL:.0%}를 벗어났다")
+                continue
+            if best is None or info["res"] < best[1]["res"]:
+                best = got
+            if info["res"] <= RES_TARGET:
+                break       # 충분히 조용하면 여기서 끝낸다. 아니면 남은 후보도 만들어 보고 제일 나은 것을 쓴다
+        if best is None:
+            print(f"! {target} rpm 제외: 쓸 만한 재료가 없다")
             continue
-        got = measure_rpm(info["raw"])
-        wob = _loop_spread(y, got)
-        if abs(got - target) > PICK_TOL * target:
-            print(f"! {target} rpm 제외: 실측 {got:.0f} rpm이 ±{PICK_TOL:.0%}를 벗어났다")
+        y, info, where, method = best
+        if info["res"] > RES_DROP:
+            # 런타임은 사다리가 단조롭기만 하면 되므로 흔들리는 칸은 지우는 편이 낫다
+            print(f"! {target} rpm 제외: 잔류 피치 {info['res'] * 100:.2f}%가 {RES_DROP:.0%}를 넘었다")
             continue
+        rpm = info["rpm"]
         name = f"{target}.ogg"
         write_ogg(os.path.join(args.outdir, name), y)
-        loops.append({"rpm": int(round(got / 10.0) * 10), "file": name})
-        info["wobble"] = wob
-        rows.append((target, got, where, info, method))
-        plots.append((name, y, got))
+        loops.append({"rpm": round(rpm, 1), "file": name})
+        rows.append((target, rpm, where, info, method))
+        plots.append((name, y, rpm))
+        envs.append((name, info["env_before"], info["env_after"]))
 
     shots = extract_oneshots(src[DEFAULT_SOURCE][0], SR_OUT, src[DEFAULT_SOURCE][1])
     for key, fade in (("start", 0.05), ("stop", 0.1)):
@@ -504,11 +795,20 @@ def main(argv=None) -> int:
         json.dump(bank, fp, ensure_ascii=False, indent=2)
         fp.write("\n")
 
-    print(f"\n{'목표':>6} {'실측':>6} {'편차':>7}  {'출처·구간':<34} {'길이':>6} {'주기':>5} {'이음새':>8} {'흔들림':>7}  방법")
-    for target, got, where, info, method in rows:
-        print(f"{target:6d} {got:6.0f} {(got - target) / target * 100:+6.2f}%  {where:<34} "
-              f"{info['len_s']:5.2f}s {info['cycles']:5d} {info['seam_db']:+7.2f}dB {info['wobble'] * 100:6.1f}%  {method}"
+    keep = {d["file"] for d in loops} | {"bank.json", "start.ogg", "stop.ogg"}
+    for f in sorted(os.listdir(args.outdir)):       # 이번에 버려진 칸의 옛 파일을 남겨 두지 않는다
+        if f.endswith(".ogg") and f not in keep:
+            os.remove(os.path.join(args.outdir, f))
+            print(f"  옛 파일 삭제: {f}")
+
+    print(f"\n{'목표':>6} {'실측':>8} {'편차':>7}  {'출처·구간':<34} {'길이':>7} {'주기':>5} {'이음새':>8} "
+          f"{'잔류':>6} {'포락선(전→후)':>14}  방법")
+    for target, rpm, where, info, method in rows:
+        print(f"{target:6d} {rpm:8.1f} {(rpm - target) / target * 100:+6.2f}%  {where:<34} "
+              f"{info['len_s']:6.3f}s {info['cycles']:5d} {info['seam_db']:+7.2f}dB {info['res'] * 100:5.2f}% "
+              f"{info['env'][0]:6.2f}→{info['env'][1]:5.2f}dB  {method}"
               + ("  [짧음]" if info["short"] else "")
+              + (f"  [출렁임 {ENV_TARGET_DB:.0f}dB 초과]" if info["env"][1] > ENV_TARGET_DB else "")
               + (f"  [리미팅 {info['peak_db']:+.1f}dBFS]" if info["limited"] else ""))
     total = sum(os.path.getsize(os.path.join(args.outdir, f)) for f in os.listdir(args.outdir))
     for f in sorted(os.listdir(args.outdir)):
@@ -517,6 +817,8 @@ def main(argv=None) -> int:
 
     if args.plot:
         _plot(args.plot, plots)
+        root, ext = os.path.splitext(args.plot)
+        _plot_env(f"{root}-env{ext or '.png'}", envs)
     return 0
 
 
